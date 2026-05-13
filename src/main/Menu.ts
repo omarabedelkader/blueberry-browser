@@ -1,4 +1,4 @@
-import { Menu, app } from "electron";
+import { Menu, app, dialog } from "electron";
 import type { Window } from "./Window";
 
 export class AppMenu {
@@ -67,6 +67,11 @@ export class AppMenu {
             accelerator: "CmdOrCtrl+E",
             click: () => this.handleToggleSidebar(),
           },
+          {
+            label: "Settings…",
+            accelerator: "CmdOrCtrl+,",
+            click: () => this.handleOpenSettings(),
+          },
           { type: "separator" },
           {
             label: "Toggle Developer Tools",
@@ -97,6 +102,15 @@ export class AppMenu {
           },
         ],
       },
+      {
+        label: "Help",
+        submenu: [
+          {
+            label: "About Blueberry Browser",
+            click: () => this.handleAbout(),
+          },
+        ],
+      },
     ];
 
     const menu = Menu.buildFromTemplate(template);
@@ -105,7 +119,7 @@ export class AppMenu {
 
   // Menu action handlers
   private handleNewTab(): void {
-    this.mainWindow.createTab("https://www.google.com");
+    this.mainWindow.createTab();
   }
 
   private handleCloseTab(): void {
@@ -131,6 +145,13 @@ export class AppMenu {
     this.mainWindow.updateAllBounds();
   }
 
+  private handleOpenSettings(): void {
+    this.mainWindow.browserSettings.show();
+    this.mainWindow.browserSettings.view.webContents.send(
+      "browser-settings-opened"
+    );
+  }
+
   private handleToggleDevTools(): void {
     if (this.mainWindow.activeTab) {
       this.mainWindow.activeTab.webContents.toggleDevTools();
@@ -152,5 +173,15 @@ export class AppMenu {
     if (this.mainWindow.activeTab) {
       this.mainWindow.activeTab.goForward();
     }
+  }
+
+  private handleAbout(): void {
+    void dialog.showMessageBox(this.mainWindow.baseWindow, {
+      type: "info",
+      title: "About Blueberry Browser",
+      message: "Blueberry Browser",
+      detail: `Version ${app.getVersion()}\n\nBrowser controls, automation, and scoped code execution in one place.`,
+      buttons: ["OK"],
+    });
   }
 }

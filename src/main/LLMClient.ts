@@ -1,10 +1,11 @@
 import { WebContents } from "electron";
 import { streamText, type LanguageModel, type CoreMessage } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { createOpenAI } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
 import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
+import { AISettingsStore } from "./AISettings";
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -19,29 +20,18 @@ interface StreamChunk {
   isComplete: boolean;
 }
 
-type LLMProvider = "openai" | "anthropic";
-
-const DEFAULT_MODELS: Record<LLMProvider, string> = {
-  openai: "gpt-4o-mini",
-  anthropic: "claude-3-5-sonnet-20241022",
-};
-
 const MAX_CONTEXT_LENGTH = 4000;
 const DEFAULT_TEMPERATURE = 0.7;
 
 export class LLMClient {
   private readonly webContents: WebContents;
   private window: Window | null = null;
-  private readonly provider: LLMProvider;
-  private readonly modelName: string;
-  private readonly model: LanguageModel | null;
+  private readonly settingsStore: AISettingsStore;
   private messages: CoreMessage[] = [];
 
   constructor(webContents: WebContents) {
     this.webContents = webContents;
-    this.provider = this.getProvider();
-    this.modelName = this.getModelName();
-    this.model = this.initializeModel();
+    this.settingsStore = AISettingsStore.getInstance();
 
     this.logInitializationStatus();
   }
@@ -51,52 +41,19 @@ export class LLMClient {
     this.window = window;
   }
 
-  private getProvider(): LLMProvider {
-    const provider = process.env.LLM_PROVIDER?.toLowerCase();
-    if (provider === "anthropic") return "anthropic";
-    return "openai"; // Default to OpenAI
-  }
-
-  private getModelName(): string {
-    return process.env.LLM_MODEL || DEFAULT_MODELS[this.provider];
-  }
-
-  private initializeModel(): LanguageModel | null {
-    const apiKey = this.getApiKey();
-    if (!apiKey) return null;
-
-    switch (this.provider) {
-      case "anthropic":
-        return anthropic(this.modelName);
-      case "openai":
-        return openai(this.modelName);
-      default:
-        return null;
-    }
-  }
-
-  private getApiKey(): string | undefined {
-    switch (this.provider) {
-      case "anthropic":
-        return process.env.ANTHROPIC_API_KEY;
-      case "openai":
-        return process.env.OPENAI_API_KEY;
-      default:
-        return undefined;
-    }
-  }
-
   private logInitializationStatus(): void {
-    if (this.model) {
+    const { provider, model } = this.settingsStore.getSettings();
+    const initialized = Boolean(this.initializeModel());
+
+    if (initialized) {
       console.log(
-        `✅ LLM Client initialized with ${this.provider} provider using model: ${this.modelName}`
+        `✅ LLM Client initialized with ${provider} provider using model: ${model}`
       );
     } else {
-      const keyName =
-        this.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
       console.error(
-        `❌ LLM Client initialization failed: ${keyName} not found in environment variables.\n` +
-          `Please add your API key to the .env file in the project root.`
+        initialized
+          ? `❌ LLM Client initialization failed for ${provider}:${model}.`
+          : `❌ LLM Client initialization failed. Check your selected provider settings and API keys.`
       );
     }
   }
@@ -145,16 +102,17 @@ export class LLMClient {
       // Send updated messages to renderer
       this.sendMessagesToRenderer();
 
-      if (!this.model) {
+      const model = this.initializeModel();
+      if (!model) {
         this.sendErrorMessage(
           request.messageId,
-          "LLM service is not configured. Please add your API key to the .env file."
+          "LLM service is not configured. Pick a model in AI panel settings and make sure the provider is reachable."
         );
         return;
       }
 
       const messages = await this.prepareMessagesWithContext(request);
-      await this.streamResponse(messages, request.messageId);
+      await this.streamResponse(messages, request.messageId, model);
     } catch (error) {
       console.error("Error in LLM request:", error);
       this.handleStreamError(error, request.messageId);
@@ -232,15 +190,12 @@ export class LLMClient {
 
   private async streamResponse(
     messages: CoreMessage[],
-    messageId: string
+    messageId: string,
+    model: LanguageModel
   ): Promise<void> {
-    if (!this.model) {
-      throw new Error("Model not initialized");
-    }
-
     try {
       const result = await streamText({
-        model: this.model,
+        model,
         messages,
         temperature: DEFAULT_TEMPERATURE,
         maxRetries: 3,
@@ -349,5 +304,33 @@ export class LLMClient {
       content: chunk.content,
       isComplete: chunk.isComplete,
     });
+  }
+
+  private initializeModel(): LanguageModel | null {
+    const settings = this.settingsStore.getSettings();
+
+    switch (settings.provider) {
+      case "anthropic": {
+        if (!process.env.ANTHROPIC_API_KEY) {
+          return null;
+        }
+        return anthropic(settings.model);
+      }
+      case "openai": {
+        if (!process.env.OPENAI_API_KEY) {
+          return null;
+        }
+        return createOpenAI({
+          apiKey: process.env.OPENAI_API_KEY,
+        })(settings.model);
+      }
+      case "ollama":
+        return createOpenAI({
+          apiKey: "ollama",
+          baseURL: settings.ollamaBaseUrl,
+        })(settings.model);
+      default:
+        return null;
+    }
   }
 }

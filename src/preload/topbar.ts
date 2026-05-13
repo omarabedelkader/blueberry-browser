@@ -31,6 +31,17 @@ const topBarAPI = {
   // Sidebar
   toggleSidebar: () =>
     electronAPI.ipcRenderer.invoke("toggle-sidebar"),
+  openBrowserSettings: () =>
+    electronAPI.ipcRenderer.invoke("open-browser-settings"),
+  getAppSettings: () => electronAPI.ipcRenderer.invoke("app-settings-get"),
+  onAppSettingsUpdated: (callback: (settings: unknown) => void) => {
+    electronAPI.ipcRenderer.on("app-settings-updated", (_, settings) =>
+      callback(settings)
+    );
+  },
+  removeAppSettingsUpdatedListener: () => {
+    electronAPI.ipcRenderer.removeAllListeners("app-settings-updated");
+  },
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to
@@ -49,4 +60,3 @@ if (process.contextIsolated) {
   // @ts-ignore (define in dts)
   window.topBarAPI = topBarAPI;
 }
-

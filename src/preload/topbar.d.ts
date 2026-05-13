@@ -7,6 +7,16 @@ interface TabInfo {
   isActive: boolean;
 }
 
+interface AppSettings {
+  provider: "ollama" | "openai" | "anthropic";
+  model: string;
+  ollamaBaseUrl: string;
+  homepage: string;
+  searchEngine: "google" | "duckduckgo" | "bing";
+  autoRouteToSandbox: boolean;
+  sidebarWidth: number;
+}
+
 interface TopBarAPI {
   // Tab management
   createTab: (
@@ -28,6 +38,10 @@ interface TopBarAPI {
 
   // Sidebar
   toggleSidebar: () => Promise<void>;
+  openBrowserSettings: () => Promise<void>;
+  getAppSettings: () => Promise<AppSettings>;
+  onAppSettingsUpdated: (callback: (settings: AppSettings) => void) => void;
+  removeAppSettingsUpdatedListener: () => void;
 }
 
 declare global {
@@ -36,4 +50,3 @@ declare global {
     topBarAPI: TopBarAPI;
   }
 }
-

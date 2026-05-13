@@ -2,6 +2,8 @@ import { BaseWindow, shell } from "electron";
 import { Tab } from "./Tab";
 import { TopBar } from "./TopBar";
 import { SideBar } from "./SideBar";
+import { AISettingsStore } from "./AISettings";
+import { BrowserSettings } from "./BrowserSettings";
 
 export class Window {
   private _baseWindow: BaseWindow;
@@ -10,6 +12,7 @@ export class Window {
   private tabCounter: number = 0;
   private _topBar: TopBar;
   private _sideBar: SideBar;
+  private _browserSettings: BrowserSettings;
 
   constructor() {
     // Create the browser window.
@@ -27,9 +30,11 @@ export class Window {
 
     this._topBar = new TopBar(this._baseWindow);
     this._sideBar = new SideBar(this._baseWindow);
+    this._browserSettings = new BrowserSettings(this._baseWindow);
 
     // Set the window reference on the LLM client to avoid circular dependency
     this._sideBar.client.setWindow(this);
+    this._sideBar.initializeFeatureManagers(() => this.activeTab);
 
     // Create the first tab
     this.createTab();
@@ -39,6 +44,7 @@ export class Window {
       this.updateTabBounds();
       this._topBar.updateBounds();
       this._sideBar.updateBounds();
+      this._browserSettings.updateBounds();
       // Notify renderer of resize through active tab
       const bounds = this._baseWindow.getBounds();
       if (this.activeTab) {
@@ -90,8 +96,10 @@ export class Window {
 
   // Tab management methods
   createTab(url?: string): Tab {
+    const initialUrl =
+      url || AISettingsStore.getInstance().getSettings().homepage;
     const tabId = `tab-${++this.tabCounter}`;
-    const tab = new Tab(tabId, url);
+    const tab = new Tab(tabId, initialUrl);
 
     // Add the tab's WebContentsView to the window
     this._baseWindow.contentView.addChildView(tab.view);
@@ -101,7 +109,7 @@ export class Window {
     tab.view.setBounds({
       x: 0,
       y: 88, // Start below the topbar
-      width: bounds.width - 400, // Subtract sidebar width
+      width: bounds.width - this.getVisibleSidebarWidth(),
       height: bounds.height - 88, // Subtract topbar height
     });
 
@@ -232,8 +240,7 @@ export class Window {
   // Handle window resize to update tab bounds
   private updateTabBounds(): void {
     const bounds = this._baseWindow.getBounds();
-    // Only subtract sidebar width if it's visible
-    const sidebarWidth = this._sideBar.getIsVisible() ? 400 : 0;
+    const sidebarWidth = this.getVisibleSidebarWidth();
 
     this.tabsMap.forEach((tab) => {
       tab.view.setBounds({
@@ -249,6 +256,26 @@ export class Window {
   updateAllBounds(): void {
     this.updateTabBounds();
     this._sideBar.updateBounds();
+    this._browserSettings.updateBounds();
+  }
+
+  setSidebarWidth(width: number): number {
+    const nextWidth = this._sideBar.setWidth(width);
+    this.updateAllBounds();
+    return nextWidth;
+  }
+
+  getSidebarState(): { width: number; minWidth: number; maxWidth: number; isVisible: boolean } {
+    return {
+      width: this._sideBar.getWidth(),
+      minWidth: this._sideBar.getMinWidth(),
+      maxWidth: this._sideBar.getMaxWidth(),
+      isVisible: this._sideBar.getIsVisible(),
+    };
+  }
+
+  private getVisibleSidebarWidth(): number {
+    return this._sideBar.getIsVisible() ? this._sideBar.getWidth() : 0;
   }
 
   // Getter for sidebar to access from main process
@@ -259,6 +286,10 @@ export class Window {
   // Getter for topBar to access from main process
   get topBar(): TopBar {
     return this._topBar;
+  }
+
+  get browserSettings(): BrowserSettings {
+    return this._browserSettings;
   }
 
   // Getter for all tabs as array

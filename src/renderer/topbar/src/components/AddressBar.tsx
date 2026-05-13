@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { ArrowLeft, ArrowRight, RefreshCw, Loader2, PanelLeftClose, PanelLeft } from 'lucide-react'
+import { ArrowLeft, ArrowRight, RefreshCw, Loader2, PanelLeftClose, PanelLeft, Cog } from 'lucide-react'
 import { useBrowser } from '../contexts/BrowserContext'
 import { ToolBarButton } from '../components/ToolBarButton'
 import { Favicon } from '../components/Favicon'
@@ -12,6 +12,25 @@ export const AddressBar: React.FC = () => {
     const [isEditing, setIsEditing] = useState(false)
     const [isFocused, setIsFocused] = useState(false)
     const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+    const [searchEngine, setSearchEngine] = useState<'google' | 'duckduckgo' | 'bing'>('google')
+
+    useEffect(() => {
+        const loadSettings = async () => {
+            try {
+                const settings = await window.topBarAPI.getAppSettings()
+                setSearchEngine(settings.searchEngine)
+            } catch (error) {
+                console.error('Failed to load app settings:', error)
+            }
+        }
+
+        loadSettings()
+        window.topBarAPI.onAppSettingsUpdated((settings) => setSearchEngine(settings.searchEngine))
+
+        return () => {
+            window.topBarAPI.removeAppSettingsUpdatedListener()
+        }
+    }, [])
 
     // Update URL when active tab changes
     useEffect(() => {
@@ -32,8 +51,14 @@ export const AddressBar: React.FC = () => {
             if (finalUrl.includes('.') && !finalUrl.includes(' ')) {
                 finalUrl = `https://${finalUrl}`
             } else {
-                // Treat as search query
-                finalUrl = `https://www.google.com/search?q=${encodeURIComponent(finalUrl)}`
+                const encoded = encodeURIComponent(finalUrl)
+                if (searchEngine === 'duckduckgo') {
+                    finalUrl = `https://duckduckgo.com/?q=${encoded}`
+                } else if (searchEngine === 'bing') {
+                    finalUrl = `https://www.bing.com/search?q=${encoded}`
+                } else {
+                    finalUrl = `https://www.google.com/search?q=${encoded}`
+                }
             }
         }
 
@@ -107,6 +132,12 @@ export const AddressBar: React.FC = () => {
         // Send IPC event to toggle sidebar
         if (window.topBarAPI) {
             window.topBarAPI.toggleSidebar()
+        }
+    }
+
+    const openSettings = () => {
+        if (window.topBarAPI) {
+            window.topBarAPI.openBrowserSettings()
         }
     }
 
@@ -197,6 +228,10 @@ export const AddressBar: React.FC = () => {
             {/* Actions Menu */}
             <div className="flex items-center gap-1 app-region-no-drag">
                 <DarkModeToggle />
+                <ToolBarButton
+                    Icon={Cog}
+                    onClick={openSettings}
+                />
                 <ToolBarButton
                     Icon={isSidebarOpen ? PanelLeftClose : PanelLeft}
                     onClick={toggleSidebar}

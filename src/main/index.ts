@@ -11,12 +11,12 @@ let menu: AppMenu | null = null;
 const createWindow = (): Window => {
   const window = new Window();
   menu = new AppMenu(window);
-  eventManager = new EventManager(window);
   return window;
 };
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId("com.electron");
+  eventManager = new EventManager(() => mainWindow);
 
   mainWindow = createWindow();
 
@@ -30,11 +30,6 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  if (eventManager) {
-    eventManager.cleanup();
-    eventManager = null;
-  }
-
   // Clean up references
   if (mainWindow) {
     mainWindow = null;
@@ -44,6 +39,10 @@ app.on("window-all-closed", () => {
   }
 
   if (process.platform !== "darwin") {
+    if (eventManager) {
+      eventManager.cleanup();
+      eventManager = null;
+    }
     app.quit();
   }
 });

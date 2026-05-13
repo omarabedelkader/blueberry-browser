@@ -6,6 +6,8 @@
     "src/renderer/src/**/*.tsx",
     "src/renderer/common/**/*",
     "src/renderer/common/**/*.tsx",
+    "src/renderer/settings/**/*",
+    "src/renderer/settings/**/*.tsx",
     "src/renderer/sidebar/**/*",
     "src/renderer/sidebar/**/*.tsx",
     "src/renderer/topbar/**/*",
