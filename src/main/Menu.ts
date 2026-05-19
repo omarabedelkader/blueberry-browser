@@ -147,9 +147,7 @@ export class AppMenu {
 
   private handleOpenSettings(): void {
     this.mainWindow.browserSettings.show();
-    this.mainWindow.browserSettings.view.webContents.send(
-      "browser-settings-opened"
-    );
+    this.mainWindow.browserSettings.send("browser-settings-opened");
   }
 
   private handleToggleDevTools(): void {

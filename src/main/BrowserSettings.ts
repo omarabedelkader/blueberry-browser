@@ -1,21 +1,33 @@
 import { is } from "@electron-toolkit/utils";
-import { BaseWindow, WebContentsView } from "electron";
+import { BaseWindow, BrowserWindow } from "electron";
 import { join } from "path";
 
 export class BrowserSettings {
-  private webContentsView: WebContentsView;
-  private baseWindow: BaseWindow;
-  private isVisible = false;
+  private readonly parentWindow: BaseWindow;
+  private settingsWindow: BrowserWindow | null = null;
 
   constructor(baseWindow: BaseWindow) {
-    this.baseWindow = baseWindow;
-    this.webContentsView = this.createWebContentsView();
-    baseWindow.contentView.addChildView(this.webContentsView);
-    this.updateBounds();
+    this.parentWindow = baseWindow;
   }
 
-  private createWebContentsView(): WebContentsView {
-    const webContentsView = new WebContentsView({
+  private createWindow(): BrowserWindow {
+    const bounds = this.parentWindow.getBounds();
+    const width = 920;
+    const height = 720;
+
+    const settingsWindow = new BrowserWindow({
+      width,
+      height,
+      minWidth: 820,
+      minHeight: 620,
+      show: false,
+      autoHideMenuBar: true,
+      title: "Blueberry Settings",
+      parent: this.parentWindow,
+      backgroundColor: "#0b1020",
+      titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+      x: bounds.x + Math.max(40, Math.round((bounds.width - width) / 2)),
+      y: bounds.y + Math.max(40, Math.round((bounds.height - height) / 2)),
       webPreferences: {
         preload: join(__dirname, "../preload/settings.js"),
         nodeIntegration: false,
@@ -29,58 +41,59 @@ export class BrowserSettings {
         "/settings/",
         process.env["ELECTRON_RENDERER_URL"]
       );
-      webContentsView.webContents.loadURL(settingsUrl.toString());
+      void settingsWindow.loadURL(settingsUrl.toString());
     } else {
-      webContentsView.webContents.loadFile(
-        join(__dirname, "../renderer/settings.html")
-      );
+      void settingsWindow.loadFile(join(__dirname, "../renderer/settings.html"));
     }
 
-    return webContentsView;
+    settingsWindow.on("closed", () => {
+      this.settingsWindow = null;
+    });
+
+    return settingsWindow;
+  }
+
+  private getOrCreateWindow(): BrowserWindow {
+    if (!this.settingsWindow || this.settingsWindow.isDestroyed()) {
+      this.settingsWindow = this.createWindow();
+    }
+
+    return this.settingsWindow;
   }
 
   updateBounds(): void {
-    if (!this.isVisible) {
-      this.webContentsView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-      return;
-    }
-
-    const bounds = this.baseWindow.getBounds();
-    const insetX = Math.max(32, Math.round(bounds.width * 0.06));
-    const insetTop = 104;
-    const insetBottom = 32;
-
-    this.webContentsView.setBounds({
-      x: insetX,
-      y: insetTop,
-      width: Math.max(760, bounds.width - insetX * 2),
-      height: Math.max(520, bounds.height - insetTop - insetBottom),
-    });
+    // Settings now lives in its own native window, so there are no embedded bounds to update.
   }
 
   show(): void {
-    this.isVisible = true;
-    this.updateBounds();
+    const settingsWindow = this.getOrCreateWindow();
+    if (!settingsWindow.isVisible()) {
+      settingsWindow.show();
+    }
+    settingsWindow.focus();
   }
 
   hide(): void {
-    this.isVisible = false;
-    this.updateBounds();
+    this.settingsWindow?.hide();
   }
 
   toggle(): void {
-    if (this.isVisible) {
+    if (this.getIsVisible()) {
       this.hide();
     } else {
       this.show();
     }
   }
 
-  get view(): WebContentsView {
-    return this.webContentsView;
+  send(channel: string, ...args: unknown[]): void {
+    if (!this.settingsWindow || this.settingsWindow.isDestroyed()) {
+      return;
+    }
+
+    this.settingsWindow.webContents.send(channel, ...args);
   }
 
   getIsVisible(): boolean {
-    return this.isVisible;
+    return !!this.settingsWindow && !this.settingsWindow.isDestroyed() && this.settingsWindow.isVisible();
   }
 }

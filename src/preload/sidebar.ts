@@ -77,6 +77,7 @@ const sidebarAPI = {
   getAISettings: () => electronAPI.ipcRenderer.invoke("ai-settings-get"),
   updateAISettings: (settings: Partial<AISettings>) =>
     electronAPI.ipcRenderer.invoke("ai-settings-update", settings),
+  listOllamaModels: () => electronAPI.ipcRenderer.invoke("ollama-models-list"),
   getAppSettings: () => electronAPI.ipcRenderer.invoke("app-settings-get"),
   updateAppSettings: (settings: Partial<AISettings>) =>
     electronAPI.ipcRenderer.invoke("app-settings-update", settings),

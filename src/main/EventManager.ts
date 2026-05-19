@@ -39,6 +39,7 @@ export class EventManager {
     "sandbox-run",
     "ai-settings-get",
     "ai-settings-update",
+    "ollama-models-list",
     "app-settings-get",
     "app-settings-update",
     "get-page-content",
@@ -55,8 +56,12 @@ export class EventManager {
     this.setupEventHandlers();
   }
 
+  private getAvailableMainWindow(): Window | null {
+    return this.getMainWindow();
+  }
+
   private requireMainWindow(): Window {
-    const mainWindow = this.getMainWindow();
+    const mainWindow = this.getAvailableMainWindow();
     if (!mainWindow) {
       throw new Error("Main window is not available.");
     }
@@ -105,7 +110,10 @@ export class EventManager {
 
     // Get tabs
     ipcMain.handle("get-tabs", () => {
-      const mainWindow = this.requireMainWindow();
+      const mainWindow = this.getAvailableMainWindow();
+      if (!mainWindow) {
+        return [];
+      }
       const activeTabId = mainWindow.activeTab?.id;
       return mainWindow.allTabs.map((tab) => ({
         id: tab.id,
@@ -200,7 +208,8 @@ export class EventManager {
 
     // Tab info
     ipcMain.handle("get-active-tab-info", () => {
-      const activeTab = this.requireMainWindow().activeTab;
+      const mainWindow = this.getAvailableMainWindow();
+      const activeTab = mainWindow?.activeTab ?? null;
       if (activeTab) {
         return {
           id: activeTab.id,
@@ -226,7 +235,7 @@ export class EventManager {
     ipcMain.handle("open-browser-settings", () => {
       const mainWindow = this.requireMainWindow();
       mainWindow.browserSettings.show();
-      mainWindow.browserSettings.view.webContents.send("browser-settings-opened");
+      mainWindow.browserSettings.send("browser-settings-opened");
       return true;
     });
 
@@ -264,7 +273,14 @@ export class EventManager {
 
   private handleFeatureWorkspaceEvents(): void {
     ipcMain.handle("computer-use-get-state", () => {
-      return this.requireMainWindow().sidebar.computerUse.getState();
+      const mainWindow = this.getAvailableMainWindow();
+      return (
+        mainWindow?.sidebar.computerUse.getState() ?? {
+          sessions: [],
+          activeSessionId: null,
+          isRunning: false,
+        }
+      );
     });
 
     ipcMain.handle("computer-use-start", async (_, request) => {
@@ -276,7 +292,16 @@ export class EventManager {
     });
 
     ipcMain.handle("sandbox-get-state", () => {
-      return this.requireMainWindow().sidebar.sandbox.getState();
+      const mainWindow = this.getAvailableMainWindow();
+      return (
+        mainWindow?.sidebar.sandbox.getState() ?? {
+          files: [],
+          activeFileId: null,
+          entryFileId: null,
+          runs: [],
+          isRunning: false,
+        }
+      );
     });
 
     ipcMain.handle("sandbox-create-file", (_, input) => {
@@ -327,19 +352,52 @@ export class EventManager {
       const mainWindow = this.requireMainWindow();
       mainWindow.sidebar.view.webContents.send("ai-settings-updated", updated);
       mainWindow.topBar.view.webContents.send("app-settings-updated", updated);
-      mainWindow.browserSettings.view.webContents.send(
-        "app-settings-updated",
-        updated
-      );
+      mainWindow.browserSettings.send("app-settings-updated", updated);
       return updated;
+    });
+
+    ipcMain.handle("ollama-models-list", async () => {
+      const settings = this.settingsStore.getSettings();
+      const baseUrl = (settings.ollamaBaseUrl || "http://127.0.0.1:11434/v1").trim();
+
+      const normalizedBaseUrl = baseUrl.endsWith("/v1")
+        ? baseUrl.slice(0, -3)
+        : baseUrl.replace(/\/+$/, "");
+
+      try {
+        const response = await fetch(`${normalizedBaseUrl}/api/tags`);
+        if (!response.ok) {
+          return {
+            ok: false,
+            models: [],
+            error: `Ollama responded with ${response.status}.`,
+          };
+        }
+
+        const data = (await response.json()) as {
+          models?: Array<{ name?: string; model?: string }>;
+        };
+
+        const models = (data.models ?? [])
+          .map((entry) => entry.name || entry.model || "")
+          .filter((name) => name.length > 0);
+
+        return { ok: true, models, error: null };
+      } catch {
+        return {
+          ok: false,
+          models: [],
+          error: "Ollama is offline. Try to launch Ollama.",
+        };
+      }
     });
   }
 
   private handlePageContentEvents(): void {
     // Get page content
     ipcMain.handle("get-page-content", async () => {
-      const mainWindow = this.requireMainWindow();
-      if (mainWindow.activeTab) {
+      const mainWindow = this.getAvailableMainWindow();
+      if (mainWindow?.activeTab) {
         try {
           return await mainWindow.activeTab.getTabHtml();
         } catch (error) {
@@ -352,8 +410,8 @@ export class EventManager {
 
     // Get page text
     ipcMain.handle("get-page-text", async () => {
-      const mainWindow = this.requireMainWindow();
-      if (mainWindow.activeTab) {
+      const mainWindow = this.getAvailableMainWindow();
+      if (mainWindow?.activeTab) {
         try {
           return await mainWindow.activeTab.getTabText();
         } catch (error) {
@@ -366,8 +424,8 @@ export class EventManager {
 
     // Get current URL
     ipcMain.handle("get-current-url", () => {
-      const mainWindow = this.requireMainWindow();
-      if (mainWindow.activeTab) {
+      const mainWindow = this.getAvailableMainWindow();
+      if (mainWindow?.activeTab) {
         return mainWindow.activeTab.url;
       }
       return null;
@@ -407,6 +465,9 @@ export class EventManager {
         isDarkMode
       );
     }
+
+    // Send to standalone settings window if it exists
+    mainWindow.browserSettings.send("dark-mode-updated", isDarkMode);
 
     // Send to all tabs
     mainWindow.allTabs.forEach((tab) => {

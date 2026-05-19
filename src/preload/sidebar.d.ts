@@ -111,9 +111,43 @@ interface AISettings {
 
 interface SidebarAPI {
   // Chat functionality
-  sendChatMessage: (request: ChatRequest) => Promise<void>;
+  sendChatMessage: (request: Partial<ChatRequest>) => Promise<void>;
+  clearChat: () => Promise<void>;
+  getMessages: () => Promise<
+    Array<{
+      role: "user" | "assistant" | "system";
+      content:
+        | string
+        | Array<
+            | string
+            | {
+                type?: string;
+                text?: string;
+                image?: string;
+              }
+          >;
+    }>
+  >;
   onChatResponse: (callback: (data: ChatResponse) => void) => void;
+  onMessagesUpdated: (
+    callback: (
+      messages: Array<{
+        role: "user" | "assistant" | "system";
+        content:
+          | string
+          | Array<
+              | string
+              | {
+                  type?: string;
+                  text?: string;
+                  image?: string;
+                }
+            >;
+      }>
+    ) => void
+  ) => void;
   removeChatResponseListener: () => void;
+  removeMessagesUpdatedListener: () => void;
 
   // Page content access
   getPageContent: () => Promise<string | null>;
@@ -126,6 +160,11 @@ interface SidebarAPI {
   setSidebarWidth: (width: number) => Promise<number>;
   getAISettings: () => Promise<AISettings>;
   updateAISettings: (settings: Partial<AISettings>) => Promise<AISettings>;
+  listOllamaModels: () => Promise<{
+    ok: boolean;
+    models: string[];
+    error: string | null;
+  }>;
   getAppSettings: () => Promise<AISettings>;
   updateAppSettings: (settings: Partial<AISettings>) => Promise<AISettings>;
   onAISettingsUpdated: (callback: (settings: AISettings) => void) => void;

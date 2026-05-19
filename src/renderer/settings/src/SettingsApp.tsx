@@ -1,11 +1,21 @@
 import React, { useEffect, useState } from "react";
 import { Button } from "@common/components/Button";
-import { Bot, Globe, LayoutPanelLeft, Search, SlidersHorizontal, X } from "lucide-react";
+import { useDarkMode } from "@common/hooks/useDarkMode";
+import {
+  Globe,
+  LayoutPanelLeft,
+  Moon,
+  Search,
+  SlidersHorizontal,
+  Sun,
+  X,
+} from "lucide-react";
 
 type AppSettings = Awaited<ReturnType<typeof window.settingsAPI.getAppSettings>>;
 
 export const SettingsApp: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const { isDarkMode, setDarkMode } = useDarkMode();
 
   useEffect(() => {
     const load = async () => {
@@ -34,7 +44,7 @@ export const SettingsApp: React.FC = () => {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-[32px] border border-border bg-background shadow-2xl">
+    <div className="flex h-full flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.08),_transparent_40%),linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.96))] dark:bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.12),_transparent_30%),linear-gradient(180deg,rgba(9,13,20,0.98),rgba(10,15,23,0.98))]">
       <div className="flex items-center justify-between border-b border-border px-6 py-5">
         <div>
           <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
@@ -60,67 +70,6 @@ export const SettingsApp: React.FC = () => {
           <section className="rounded-[28px] border border-border bg-card p-5">
             <div className="flex items-start gap-3">
               <div className="mt-0.5 flex size-10 items-center justify-center rounded-2xl bg-secondary">
-                <Bot className="size-4 text-foreground" />
-              </div>
-              <div>
-                <h2 className="text-sm font-semibold text-foreground">Models</h2>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Choose the provider and model used by Blueberry features.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="mb-2 block text-xs font-medium text-muted-foreground">Provider</label>
-                <select
-                  value={settings.provider}
-                  onChange={(event) =>
-                    void updateSettings({
-                      provider: event.target.value as AppSettings["provider"],
-                    })
-                  }
-                  className="w-full rounded-2xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
-                >
-                  <option value="ollama">Ollama (local)</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-medium text-muted-foreground">Model</label>
-                <input
-                  value={settings.model}
-                  onChange={(event) => setSettings({ ...settings, model: event.target.value })}
-                  onBlur={(event) => void updateSettings({ model: event.target.value })}
-                  placeholder="Paste a model name from ollama list"
-                  className="w-full rounded-2xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
-                />
-              </div>
-
-              {settings.provider === "ollama" && (
-                <div>
-                  <label className="mb-2 block text-xs font-medium text-muted-foreground">Ollama Base URL</label>
-                  <input
-                    value={settings.ollamaBaseUrl}
-                    onChange={(event) =>
-                      setSettings({ ...settings, ollamaBaseUrl: event.target.value })
-                    }
-                    onBlur={(event) =>
-                      void updateSettings({ ollamaBaseUrl: event.target.value })
-                    }
-                    placeholder="http://127.0.0.1:11434/v1"
-                    className="w-full rounded-2xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
-                  />
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="rounded-[28px] border border-border bg-card p-5">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex size-10 items-center justify-center rounded-2xl bg-secondary">
                 <Globe className="size-4 text-foreground" />
               </div>
               <div>
@@ -132,6 +81,40 @@ export const SettingsApp: React.FC = () => {
             </div>
 
             <div className="mt-4 space-y-3">
+              <div>
+                <label className="mb-2 block text-xs font-medium text-muted-foreground">Theme</label>
+                <div className="grid grid-cols-2 gap-2 rounded-2xl bg-secondary/60 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setDarkMode(false)}
+                    className={
+                      isDarkMode
+                        ? "rounded-[18px] px-3 py-2 text-sm text-muted-foreground transition-colors"
+                        : "rounded-[18px] bg-card px-3 py-2 text-sm text-foreground shadow-sm transition-colors"
+                    }
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <Sun className="size-4" />
+                      Light
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDarkMode(true)}
+                    className={
+                      isDarkMode
+                        ? "rounded-[18px] bg-card px-3 py-2 text-sm text-foreground shadow-sm transition-colors"
+                        : "rounded-[18px] px-3 py-2 text-sm text-muted-foreground transition-colors"
+                    }
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <Moon className="size-4" />
+                      Dark
+                    </span>
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="mb-2 block text-xs font-medium text-muted-foreground">Homepage / New Tab URL</label>
                 <input

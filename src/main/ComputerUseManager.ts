@@ -15,6 +15,7 @@ type ActionType =
   | "navigate"
   | "click"
   | "type"
+  | "press"
   | "extract_text"
   | "wait"
   | "run_script";
@@ -76,7 +77,7 @@ Return strict JSON only with this shape:
   "summary": "short summary",
   "steps": [
     {
-      "action": "navigate|click|type|extract_text|wait|run_script",
+      "action": "navigate|click|type|press|extract_text|wait|run_script",
       "label": "what the step does",
       "url": "https://...",
       "selector": "css selector",
@@ -91,6 +92,7 @@ Rules:
 - Use at most 6 steps.
 - Only include fields relevant to the chosen action.
 - Prefer stable CSS selectors.
+- Use "press" for keyboard actions like Enter, Tab, Escape, or ArrowDown.
 - If the task is unclear, gather context first with extract_text.
 - Use run_script only when it is meaningfully better than click/type.
 - Blueberry also has a local sandbox for code, file, spreadsheet, and data tasks.
@@ -273,6 +275,10 @@ export class ComputerUseManager {
     steps: PlannedStep[];
   }> {
     const snapshot = await this.getPageSnapshot();
+    const heuristicPlan = this.buildHeuristicPlan(goal, snapshot);
+    if (heuristicPlan) {
+      return heuristicPlan;
+    }
     const model = this.initializeModel();
 
     if (!model) {
@@ -367,6 +373,105 @@ runBlueberryTask();`;
     };
   }
 
+  private buildHeuristicPlan(
+    goal: string,
+    snapshot: { url: string | null; title: string | null; textPreview: string }
+  ): { summary: string; steps: PlannedStep[] } | null {
+    const normalizedGoal = goal.trim().toLowerCase();
+    const currentUrl = snapshot.url ?? "";
+    const onGoogle = /https?:\/\/(www\.)?google\./i.test(currentUrl);
+    const searchMatch = goal.match(/\bsearch for\b\s+(.+)$/i);
+    const findMatch = goal.match(/\bfind\b\s+(.+)$/i);
+    const query = (searchMatch?.[1] || findMatch?.[1] || goal)
+      .replace(/\b(on|in)\s+google\b/gi, "")
+      .trim();
+
+    const looksLikeShoppingTask =
+      /\b(shoe|shoes|sneaker|sneakers|boot|boots|shirt|bag|watch|jacket|running)\b/i.test(
+        normalizedGoal
+      );
+
+    if (onGoogle && /\b(search|find)\b/i.test(normalizedGoal) && query) {
+      const steps: PlannedStep[] = [
+        {
+          action: "type",
+          label: `Type search query`,
+          selector: 'textarea[name="q"], input[name="q"]',
+          text: query,
+        },
+        {
+          action: "press",
+          label: "Submit search",
+          selector: 'textarea[name="q"], input[name="q"]',
+          text: "Enter",
+        },
+        {
+          action: "wait",
+          label: "Wait for search results",
+          ms: 1400,
+        },
+        {
+          action: "run_script",
+          label: "Open the first search result",
+          script: this.buildClickFirstGoogleResultScript(),
+        },
+        {
+          action: "wait",
+          label: "Wait for the result page to load",
+          ms: 1400,
+        },
+      ];
+
+      if (looksLikeShoppingTask) {
+        steps.push({
+          action: "run_script",
+          label: "Open the first product item on the page",
+          script: this.buildClickFirstProductScript(),
+        });
+      } else {
+        steps.push({
+          action: "extract_text",
+          label: "Read the result page",
+        });
+      }
+
+      return {
+        summary: looksLikeShoppingTask
+          ? `Search Google for "${query}", open the first result, then open the first likely product item.`
+          : `Search Google for "${query}" and open the first result page.`,
+        steps,
+      };
+    }
+
+    if (
+      looksLikeShoppingTask &&
+      !onGoogle &&
+      /\b(first item|first product|open first|click first)\b/i.test(normalizedGoal)
+    ) {
+      return {
+        summary: "Open the first likely product item on the current shopping page.",
+        steps: [
+          {
+            action: "run_script",
+            label: "Open the first product item on the page",
+            script: this.buildClickFirstProductScript(),
+          },
+          {
+            action: "wait",
+            label: "Wait for the product page to load",
+            ms: 1400,
+          },
+          {
+            action: "extract_text",
+            label: "Read the product page",
+          },
+        ],
+      };
+    }
+
+    return null;
+  }
+
   private normalizeStep(step: PlannedStep): PlannedStep {
     return {
       action: step.action,
@@ -407,6 +512,12 @@ runBlueberryTask();`;
           this.buildTypeScript(step.selector, step.text ?? "")
         );
         return `Typed into ${step.selector}`;
+      case "press":
+        await this.runTabScript(
+          tab,
+          this.buildPressScript(step.text ?? "Enter", step.selector)
+        );
+        return `Pressed ${step.text ?? "Enter"}`;
       case "extract_text": {
         const text = await tab.getTabText();
         return `Extracted page text preview:\n${text.slice(0, 700)}`;
@@ -469,11 +580,13 @@ runBlueberryTask();`;
 
   private buildClickScript(selector: string): string {
     return `(() => {
+      ${this.buildCursorHelpers()}
       const element = document.querySelector(${JSON.stringify(selector)});
       if (!element) {
         throw new Error("Element not found for selector: ${selector}");
       }
       element.scrollIntoView({ block: "center", behavior: "instant" });
+      window.__blueberryMoveCursorToElement(element);
       if (element instanceof HTMLElement) {
         element.click();
       } else {
@@ -485,11 +598,14 @@ runBlueberryTask();`;
 
   private buildTypeScript(selector: string, text: string): string {
     return `(() => {
+      ${this.buildCursorHelpers()}
       const element = document.querySelector(${JSON.stringify(selector)});
       if (!element) {
         throw new Error("Element not found for selector: ${selector}");
       }
       const value = ${JSON.stringify(text)};
+      element.scrollIntoView({ block: "center", behavior: "instant" });
+      window.__blueberryMoveCursorToElement(element);
       if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
         element.focus();
         element.value = value;
@@ -505,6 +621,148 @@ runBlueberryTask();`;
       }
       throw new Error("Element is not an input, textarea, or contenteditable node.");
     })()`;
+  }
+
+  private buildPressScript(key: string, selector?: string): string {
+    return `(() => {
+      ${this.buildCursorHelpers()}
+      const keyValue = ${JSON.stringify(key)};
+      const target = ${
+        selector
+          ? `document.querySelector(${JSON.stringify(selector)}) || document.activeElement || document.body`
+          : `document.activeElement || document.body`
+      };
+      if (!target) {
+        throw new Error("No target available for key press.");
+      }
+      if (target instanceof Element) {
+        target.scrollIntoView({ block: "center", behavior: "instant" });
+        window.__blueberryMoveCursorToElement(target);
+      }
+      if (target instanceof HTMLElement) {
+        target.focus();
+      }
+      const code = keyValue.length === 1 ? "Key" + keyValue.toUpperCase() : keyValue;
+      const keyCodeMap = { Enter: 13, Tab: 9, Escape: 27, ArrowDown: 40, ArrowUp: 38, ArrowLeft: 37, ArrowRight: 39 };
+      const keyCode = keyCodeMap[keyValue] ?? (keyValue.length === 1 ? keyValue.toUpperCase().charCodeAt(0) : 0);
+      const eventInit = {
+        key: keyValue,
+        code,
+        keyCode,
+        which: keyCode,
+        bubbles: true,
+        cancelable: true
+      };
+      target.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+      target.dispatchEvent(new KeyboardEvent("keypress", eventInit));
+      if (
+        keyValue === "Enter" &&
+        target instanceof HTMLInputElement &&
+        target.form
+      ) {
+        if (typeof target.form.requestSubmit === "function") {
+          target.form.requestSubmit();
+        } else {
+          target.form.submit();
+        }
+      }
+      target.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+      return true;
+    })()`;
+  }
+
+  private buildClickFirstGoogleResultScript(): string {
+    return `(() => {
+      ${this.buildCursorHelpers()}
+      const selectors = [
+        '#search a[href]:has(h3)',
+        'a[href]:has(h3)',
+        'a[data-ved][href]'
+      ];
+      const link = selectors
+        .map((selector) => document.querySelector(selector))
+        .find((entry) => entry instanceof HTMLAnchorElement);
+      if (!(link instanceof HTMLAnchorElement)) {
+        throw new Error("No Google search result link found.");
+      }
+      link.scrollIntoView({ block: "center", behavior: "instant" });
+      window.__blueberryMoveCursorToElement(link);
+      link.click();
+      return link.href;
+    })()`;
+  }
+
+  private buildClickFirstProductScript(): string {
+    return `(() => {
+      ${this.buildCursorHelpers()}
+      const candidates = Array.from(document.querySelectorAll('a[href]')).filter((link) => {
+        if (!(link instanceof HTMLAnchorElement)) {
+          return false;
+        }
+        const text = (link.textContent || "").trim().toLowerCase();
+        if (!text || text.length < 2) {
+          return false;
+        }
+        if (/sign in|log in|login|register|wishlist|privacy|terms|support|help|cart/.test(text)) {
+          return false;
+        }
+        const rect = link.getBoundingClientRect();
+        if (rect.width < 24 || rect.height < 16) {
+          return false;
+        }
+        return /(shoe|sneaker|running|men|women|kids|white|black|product|shop|buy|size)/.test(text);
+      });
+      const target = candidates[0];
+      if (!(target instanceof HTMLAnchorElement)) {
+        throw new Error("No likely product link found on the page.");
+      }
+      target.scrollIntoView({ block: "center", behavior: "instant" });
+      window.__blueberryMoveCursorToElement(target);
+      target.click();
+      return target.href;
+    })()`;
+  }
+
+  private buildCursorHelpers(): string {
+    return `
+      if (!window.__blueberryEnsureCursor) {
+        window.__blueberryEnsureCursor = () => {
+          let cursor = document.getElementById("__blueberry-agent-cursor");
+          if (!cursor) {
+            cursor = document.createElement("div");
+            cursor.id = "__blueberry-agent-cursor";
+            cursor.style.position = "fixed";
+            cursor.style.left = "0px";
+            cursor.style.top = "0px";
+            cursor.style.width = "18px";
+            cursor.style.height = "18px";
+            cursor.style.borderRadius = "999px";
+            cursor.style.background = "rgba(37, 99, 235, 0.92)";
+            cursor.style.border = "2px solid white";
+            cursor.style.boxShadow = "0 8px 24px rgba(37, 99, 235, 0.35)";
+            cursor.style.zIndex = "2147483647";
+            cursor.style.pointerEvents = "none";
+            cursor.style.transform = "translate(-50%, -50%)";
+            cursor.style.transition = "left 180ms ease, top 180ms ease, transform 120ms ease";
+            document.body.appendChild(cursor);
+          }
+          return cursor;
+        };
+        window.__blueberryMoveCursorToElement = (element) => {
+          const cursor = window.__blueberryEnsureCursor();
+          const rect = element.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          cursor.style.left = x + "px";
+          cursor.style.top = y + "px";
+          cursor.style.transform = "translate(-50%, -50%) scale(1.08)";
+          window.setTimeout(() => {
+            cursor.style.transform = "translate(-50%, -50%) scale(1)";
+          }, 140);
+          return cursor;
+        };
+      }
+    `;
   }
 
   private stringifyExecutionResult(result: unknown): string {

@@ -22,6 +22,10 @@ interface StreamChunk {
 
 const MAX_CONTEXT_LENGTH = 4000;
 const DEFAULT_TEMPERATURE = 0.7;
+const BROWSER_ACTION_PATTERN =
+  /\b(open|go to|visit|search|find|click|type|fill|submit|add to cart|add to checkout|checkout|buy|book|order|sign in|log in)\b/i;
+const NON_ACTION_PATTERN =
+  /\b(explain|summari[sz]e|what is|what does|analy[sz]e|review|describe|tell me|why)\b/i;
 
 export class LLMClient {
   private readonly webContents: WebContents;
@@ -102,6 +106,11 @@ export class LLMClient {
       // Send updated messages to renderer
       this.sendMessagesToRenderer();
 
+      if (this.shouldUseBrowserAutomation(request.message)) {
+        await this.handleBrowserAutomationRequest(request);
+        return;
+      }
+
       const model = this.initializeModel();
       if (!model) {
         this.sendErrorMessage(
@@ -126,6 +135,85 @@ export class LLMClient {
 
   getMessages(): CoreMessage[] {
     return this.messages;
+  }
+
+  private shouldUseBrowserAutomation(message: string): boolean {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return false;
+    }
+
+    return BROWSER_ACTION_PATTERN.test(trimmed) && !NON_ACTION_PATTERN.test(trimmed);
+  }
+
+  private async handleBrowserAutomationRequest(
+    request: ChatRequest
+  ): Promise<void> {
+    if (!this.window) {
+      this.sendErrorMessage(
+        request.messageId,
+        "Browser automation is unavailable because the main window is not ready."
+      );
+      return;
+    }
+
+    const state = await this.window.sidebar.computerUse.startSession({
+      goal: request.message.trim(),
+    });
+
+    const session =
+      state.sessions.find((entry) => entry.id === state.activeSessionId) ??
+      state.sessions[0] ??
+      null;
+
+    if (!session) {
+      this.sendErrorMessage(
+        request.messageId,
+        "I couldn't start the browser task."
+      );
+      return;
+    }
+
+    const completedSteps = session.steps
+      .filter((step) => step.status === "completed")
+      .map((step) => `- ${step.label}`)
+      .slice(0, 5);
+
+    const failedStep = session.steps.find((step) => step.status === "failed");
+    const lines = [
+      session.status === "completed"
+        ? "I used browser tools to carry out that task."
+        : session.status === "failed"
+          ? "I started the browser task, but it failed before finishing."
+          : "I started the browser task.",
+      session.summary,
+    ];
+
+    if (completedSteps.length > 0) {
+      lines.push("", "Completed steps:", ...completedSteps);
+    }
+
+    if (failedStep?.result) {
+      lines.push("", `Problem: ${failedStep.result}`);
+    }
+
+    if (session.currentUrl) {
+      lines.push("", `Current page: ${session.currentUrl}`);
+    }
+
+    this.appendAssistantMessage(lines.join("\n"));
+    this.sendStreamChunk(request.messageId, {
+      content: lines.join("\n"),
+      isComplete: true,
+    });
+  }
+
+  private appendAssistantMessage(content: string): void {
+    this.messages.push({
+      role: "assistant",
+      content,
+    });
+    this.sendMessagesToRenderer();
   }
 
   private sendMessagesToRenderer(): void {

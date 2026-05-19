@@ -6,9 +6,9 @@ import { AddressBar } from './components/AddressBar'
 export const TopBarApp: React.FC = () => {
     return (
         <BrowserProvider>
-            <div className="flex flex-col bg-background select-none bg-red-500">
+            <div className="flex flex-col bg-background select-none">
                 {/* Tab Bar */}
-                <div className="w-full h-10 pr-2 flex items-center app-region-drag bg-muted dark:bg-muted">
+                <div className="w-full h-10 px-2 pt-1 flex items-center app-region-drag bg-[linear-gradient(180deg,rgba(248,250,252,0.98),rgba(235,241,248,0.96))] dark:bg-[linear-gradient(180deg,rgba(18,23,31,0.98),rgba(14,18,26,0.98))]">
                     <TabBar />
                 </div>
 
@@ -20,4 +20,3 @@ export const TopBarApp: React.FC = () => {
         </BrowserProvider>
     )
 }
-

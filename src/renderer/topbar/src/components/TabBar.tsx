@@ -10,31 +10,61 @@ interface TabItemProps {
     title: string
     favicon?: string | null
     isActive: boolean
+    colorIndex: number
     isPinned?: boolean
     onClose: () => void
     onActivate: () => void
 }
 
+const TAB_TINTS = [
+    {
+        idle: "bg-[rgba(244,114,182,0.10)] hover:bg-[rgba(244,114,182,0.16)] border-[rgba(244,114,182,0.18)]",
+        active: "bg-[rgba(244,114,182,0.22)] border-[rgba(244,114,182,0.32)]",
+    },
+    {
+        idle: "bg-[rgba(59,130,246,0.10)] hover:bg-[rgba(59,130,246,0.16)] border-[rgba(59,130,246,0.18)]",
+        active: "bg-[rgba(59,130,246,0.22)] border-[rgba(59,130,246,0.32)]",
+    },
+    {
+        idle: "bg-[rgba(16,185,129,0.10)] hover:bg-[rgba(16,185,129,0.16)] border-[rgba(16,185,129,0.18)]",
+        active: "bg-[rgba(16,185,129,0.22)] border-[rgba(16,185,129,0.32)]",
+    },
+    {
+        idle: "bg-[rgba(245,158,11,0.10)] hover:bg-[rgba(245,158,11,0.16)] border-[rgba(245,158,11,0.18)]",
+        active: "bg-[rgba(245,158,11,0.22)] border-[rgba(245,158,11,0.32)]",
+    },
+    {
+        idle: "bg-[rgba(168,85,247,0.10)] hover:bg-[rgba(168,85,247,0.16)] border-[rgba(168,85,247,0.18)]",
+        active: "bg-[rgba(168,85,247,0.22)] border-[rgba(168,85,247,0.32)]",
+    },
+    {
+        idle: "bg-[rgba(236,72,153,0.10)] hover:bg-[rgba(236,72,153,0.16)] border-[rgba(236,72,153,0.18)]",
+        active: "bg-[rgba(236,72,153,0.22)] border-[rgba(236,72,153,0.32)]",
+    },
+]
+
 const TabItem: React.FC<TabItemProps> = ({
     title,
     favicon,
     isActive,
+    colorIndex,
     isPinned = false,
     onClose,
     onActivate
 }) => {
+    const tint = TAB_TINTS[colorIndex % TAB_TINTS.length]
     const baseClassName = cn(
-        "relative flex items-center h-8 pl-2 pr-1.5 select-none rounded-md",
+        "relative flex items-center h-8 pl-2 pr-1.5 select-none rounded-xl border",
         "text-primary group/tab transition-all duration-200 cursor-pointer",
         "app-region-no-drag", // Make tabs clickable
         isActive
-            ? "bg-background shadow-tab dark:bg-secondary dark:shadow-none"
-            : "bg-transparent hover:bg-muted/50 dark:hover:bg-muted/30",
+            ? cn("shadow-sm dark:shadow-none", tint.active)
+            : cn("shadow-none", tint.idle),
         isPinned ? "w-8 !px-0 justify-center" : ""
     )
 
     return (
-        <div className="py-1 px-0.5">
+        <div className="py-1 px-1">
             <div
                 className={baseClassName}
                 onClick={() => !isActive && onActivate()}
@@ -60,7 +90,7 @@ const TabItem: React.FC<TabItemProps> = ({
                         }}
                         className={cn(
                             "flex-shrink-0 p-1 rounded-md transition-opacity",
-                            "hover:bg-muted dark:hover:bg-muted/50",
+                            "hover:bg-black/5 dark:hover:bg-white/10",
                             "opacity-0 group-hover/tab:opacity-100",
                             isActive && "opacity-100"
                         )}
@@ -74,7 +104,7 @@ const TabItem: React.FC<TabItemProps> = ({
 }
 
 export const TabBar: React.FC = () => {
-    const { tabs, createTab, closeTab, switchTab, isLoading } = useBrowser()
+    const { tabs, createTab, closeTab, switchTab } = useBrowser()
 
     const handleCreateTab = () => {
         createTab('https://www.google.com')
@@ -91,19 +121,20 @@ export const TabBar: React.FC = () => {
     }
 
     return (
-        <div className="flex-1 overflow-x-hidden flex items-center">
+        <div className="flex-1 overflow-x-hidden flex items-center rounded-t-2xl border border-border/70 bg-[linear-gradient(180deg,rgba(236,240,246,0.92),rgba(226,232,240,0.82))] px-2 dark:border-border/80 dark:bg-[linear-gradient(180deg,rgba(27,34,46,0.96),rgba(21,27,37,0.96))]">
             {/* macOS traffic lights spacing */}
             <div className="pl-20" />
 
             {/* Tabs */}
             <div className="flex-1 overflow-x-auto flex">
-                {tabs.map(tab => (
+                {tabs.map((tab, index) => (
                     <TabItem
                         key={tab.id}
                         id={tab.id}
                         title={tab.title}
                         favicon={getFavicon(tab.url)}
                         isActive={tab.isActive}
+                        colorIndex={index}
                         onClose={() => closeTab(tab.id)}
                         onActivate={() => switchTab(tab.id)}
                     />
@@ -120,4 +151,3 @@ export const TabBar: React.FC = () => {
         </div>
     )
 }
-
