@@ -15,6 +15,7 @@ interface SettingsAPI {
   updateAppSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
   setSidebarWidth: (width: number) => Promise<number>;
   closeBrowserSettings: () => Promise<void>;
+  listOllamaModels: () => Promise<{ ok: boolean; models: string[]; error: string | null }>;
   onAppSettingsUpdated: (callback: (settings: AppSettings) => void) => void;
   removeAppSettingsUpdatedListener: () => void;
 }

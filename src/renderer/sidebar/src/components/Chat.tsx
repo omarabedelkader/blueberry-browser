@@ -6,8 +6,6 @@ import { cn } from "@common/lib/utils";
 type SidebarLayout = Awaited<ReturnType<typeof window.sidebarAPI.getSidebarLayout>>;
 type TabInfo = Awaited<ReturnType<typeof window.sidebarAPI.getActiveTabInfo>>;
 type ChatHistoryMessage = Awaited<ReturnType<typeof window.sidebarAPI.getMessages>>[number];
-type AISettings = Awaited<ReturnType<typeof window.sidebarAPI.getAISettings>>;
-type OllamaModelsResult = Awaited<ReturnType<typeof window.sidebarAPI.listOllamaModels>>;
 
 const extractMessageText = (message: ChatHistoryMessage): string => {
   if (typeof message.content === "string") {
@@ -43,12 +41,6 @@ export const Chat: React.FC = () => {
   const [draft, setDraft] = useState("");
   const [tabInfo, setTabInfo] = useState<TabInfo>(null);
   const [layout, setLayout] = useState<SidebarLayout | null>(null);
-  const [aiSettings, setAISettings] = useState<AISettings | null>(null);
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-  const [ollamaState, setOllamaState] = useState<{
-    loading: boolean;
-    error: string | null;
-  }>({ loading: false, error: null });
   const [isSending, setIsSending] = useState(false);
   const dragState = useRef<{
     startMouseX: number;
@@ -60,17 +52,15 @@ export const Chat: React.FC = () => {
 
   useEffect(() => {
     const load = async () => {
-      const [history, activeBrowserTab, sidebarLayout, settings] = await Promise.all([
+      const [history, activeBrowserTab, sidebarLayout] = await Promise.all([
         window.sidebarAPI.getMessages(),
         window.sidebarAPI.getActiveTabInfo(),
         window.sidebarAPI.getSidebarLayout(),
-        window.sidebarAPI.getAISettings(),
       ]);
 
       setMessages(history);
       setTabInfo(activeBrowserTab);
       setLayout(sidebarLayout);
-      setAISettings(settings);
     };
 
     void load();
@@ -88,15 +78,10 @@ export const Chat: React.FC = () => {
       setIsSending(false);
     });
 
-    window.sidebarAPI.onAISettingsUpdated((settings) => {
-      setAISettings(settings);
-    });
-
     return () => {
       window.clearInterval(interval);
       window.sidebarAPI.removeMessagesUpdatedListener();
       window.sidebarAPI.removeChatResponseListener();
-      window.sidebarAPI.removeAISettingsUpdatedListener();
     };
   }, []);
 
@@ -162,35 +147,6 @@ export const Chat: React.FC = () => {
         : "Summarize the current page and explain the main points.",
     [tabInfo?.title]
   );
-
-  const loadOllamaModels = async (): Promise<OllamaModelsResult> => {
-    setOllamaState({ loading: true, error: null });
-    const result = await window.sidebarAPI.listOllamaModels();
-    setOllamaModels(result.models);
-    setOllamaState({
-      loading: false,
-      error: result.ok ? null : result.error,
-    });
-    return result;
-  };
-
-  const updateSettings = async (patch: Partial<AISettings>) => {
-    const next = await window.sidebarAPI.updateAppSettings(patch);
-    setAISettings(next);
-
-    if ((patch.provider ?? next.provider) === "ollama") {
-      void loadOllamaModels();
-    }
-  };
-
-  useEffect(() => {
-    if (aiSettings?.provider === "ollama") {
-      void loadOllamaModels();
-    } else {
-      setOllamaModels([]);
-      setOllamaState({ loading: false, error: null });
-    }
-  }, [aiSettings?.provider, aiSettings?.ollamaBaseUrl]);
 
   const sendMessage = async (message: string) => {
     const trimmedMessage = message.trim();
@@ -302,7 +258,7 @@ export const Chat: React.FC = () => {
             className="min-h-[112px] w-full resize-none bg-transparent text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
             placeholder="Ask about the current page..."
           />
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex items-center justify-end gap-2">
             <Button
               variant="ghost"
               size="icon"
@@ -311,53 +267,6 @@ export const Chat: React.FC = () => {
             >
               <Plus className="size-4" />
             </Button>
-            <select
-              value={aiSettings?.provider ?? "ollama"}
-              onChange={(event) =>
-                void updateSettings({
-                  provider: event.target.value as AISettings["provider"],
-                })
-              }
-              className="h-9 min-w-0 flex-1 rounded-full border border-border bg-background px-3 text-xs text-foreground outline-none"
-            >
-              <option value="ollama">Ollama</option>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-            </select>
-            {aiSettings?.provider === "ollama" ? (
-              <select
-                value={aiSettings?.model ?? ""}
-                onChange={(event) => void updateSettings({ model: event.target.value })}
-                className="h-9 min-w-0 flex-[1.2] rounded-full border border-border bg-background px-3 text-xs text-foreground outline-none"
-              >
-                <option value="">
-                  {ollamaState.loading
-                    ? "Loading Ollama models..."
-                    : ollamaState.error
-                      ? "Ollama offline"
-                      : ollamaModels.length > 0
-                        ? "Choose model"
-                        : "No models found"}
-                </option>
-                {ollamaModels.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                value={aiSettings?.model ?? ""}
-                onChange={(event) =>
-                  setAISettings((previous) =>
-                    previous ? { ...previous, model: event.target.value } : previous
-                  )
-                }
-                onBlur={(event) => void updateSettings({ model: event.target.value })}
-                className="h-9 min-w-0 flex-[1.2] rounded-full border border-border bg-background px-3 text-xs text-foreground outline-none placeholder:text-muted-foreground"
-                placeholder="Model"
-              />
-            )}
             <Button
               size="icon"
               onClick={() => void sendMessage(draft)}
@@ -371,9 +280,6 @@ export const Chat: React.FC = () => {
               )}
             </Button>
           </div>
-          {aiSettings?.provider === "ollama" && ollamaState.error && (
-            <p className="mt-2 px-1 text-xs text-muted-foreground">{ollamaState.error}</p>
-          )}
         </div>
       </div>
     </div>

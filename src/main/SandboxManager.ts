@@ -2,7 +2,7 @@ import { WebContents } from "electron";
 import { promises as fs } from "fs";
 import { tmpdir } from "os";
 import { join, basename, extname } from "path";
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 import type { Tab } from "./Tab";
 
 type SandboxRunStatus = "idle" | "running" | "completed" | "failed";
@@ -131,7 +131,7 @@ export class SandboxManager {
   private readonly state: SandboxState;
   private fileCounter = 0;
   private runCounter = 0;
-  private activeProcess: ChildProcessWithoutNullStreams | null = null;
+  private activeProcess: ChildProcess | null = null;
 
   constructor(webContents: WebContents, getActiveTab: () => Tab | null) {
     this.webContents = webContents;

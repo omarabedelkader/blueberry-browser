@@ -24,6 +24,7 @@ const DEFAULTS: Record<LLMProvider, { model: string }> = {
 const DEFAULT_HOMEPAGE = "https://www.google.com";
 const DEFAULT_SEARCH_ENGINE: SearchEngine = "google";
 const DEFAULT_SIDEBAR_WIDTH = 400;
+const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 
 export class AISettingsStore {
   private static instance: AISettingsStore | null = null;
@@ -48,18 +49,17 @@ export class AISettingsStore {
 
   updateSettings(input: Partial<AISettings>): AISettings {
     const nextProvider = input.provider ?? this.settings.provider;
-    const hasModelUpdate = typeof input.model === "string";
-    const nextModel = hasModelUpdate
-      ? input.model.trim()
+    const nextModelInput = typeof input.model === "string" ? input.model : null;
+    const nextModel = nextModelInput !== null
+      ? nextModelInput.trim()
       : this.settings.model || DEFAULTS[nextProvider].model;
 
     this.settings = {
       provider: nextProvider,
       model: nextModel,
-      ollamaBaseUrl:
-        input.ollamaBaseUrl?.trim() ||
-        this.settings.ollamaBaseUrl ||
-        "http://127.0.0.1:11434/v1",
+      ollamaBaseUrl: this.normalizeOllamaBaseUrl(
+        input.ollamaBaseUrl ?? this.settings.ollamaBaseUrl ?? DEFAULT_OLLAMA_BASE_URL
+      ),
       homepage: input.homepage?.trim() || this.settings.homepage || DEFAULT_HOMEPAGE,
       searchEngine:
         input.searchEngine ?? this.settings.searchEngine ?? DEFAULT_SEARCH_ENGINE,
@@ -87,7 +87,9 @@ export class AISettingsStore {
       return {
         provider: this.parseProvider(parsed.provider) ?? fallback.provider,
         model: parsed.model?.trim() || fallback.model,
-        ollamaBaseUrl: parsed.ollamaBaseUrl?.trim() || fallback.ollamaBaseUrl,
+        ollamaBaseUrl: this.normalizeOllamaBaseUrl(
+          parsed.ollamaBaseUrl ?? fallback.ollamaBaseUrl
+        ),
         homepage: parsed.homepage?.trim() || fallback.homepage,
         searchEngine:
           this.parseSearchEngine(parsed.searchEngine) ?? fallback.searchEngine,
@@ -113,8 +115,9 @@ export class AISettingsStore {
     return {
       provider,
       model: process.env.LLM_MODEL || DEFAULTS[provider].model,
-      ollamaBaseUrl:
-        process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434/v1",
+      ollamaBaseUrl: this.normalizeOllamaBaseUrl(
+        process.env.OLLAMA_BASE_URL ?? DEFAULT_OLLAMA_BASE_URL
+      ),
       homepage: process.env.BROWSER_HOMEPAGE?.trim() || DEFAULT_HOMEPAGE,
       searchEngine:
         this.parseSearchEngine(process.env.BROWSER_SEARCH_ENGINE) ??
@@ -140,5 +143,11 @@ export class AISettingsStore {
 
   private parseSidebarWidth(value: number): number {
     return Math.max(320, Math.min(720, Math.round(value)));
+  }
+
+  private normalizeOllamaBaseUrl(value: string): string {
+    const trimmed = value.trim();
+    const normalized = trimmed.replace(/\/(?:v1|api)\/?$/, "");
+    return normalized || DEFAULT_OLLAMA_BASE_URL;
   }
 }

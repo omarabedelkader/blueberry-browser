@@ -19,6 +19,8 @@ const settingsAPI = {
     electronAPI.ipcRenderer.invoke("sidebar-set-width", width),
   closeBrowserSettings: () =>
     electronAPI.ipcRenderer.invoke("close-browser-settings"),
+  listOllamaModels: () =>
+    electronAPI.ipcRenderer.invoke("ollama-models-list"),
   onAppSettingsUpdated: (callback: (settings: AppSettings) => void) => {
     electronAPI.ipcRenderer.on("app-settings-updated", (_, settings) =>
       callback(settings)

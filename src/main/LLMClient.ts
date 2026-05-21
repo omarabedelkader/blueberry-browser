@@ -2,6 +2,7 @@ import { WebContents } from "electron";
 import { streamText, type LanguageModel, type CoreMessage } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { createOllama } from "ai-sdk-ollama";
 import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
@@ -26,6 +27,8 @@ const BROWSER_ACTION_PATTERN =
   /\b(open|go to|visit|search|find|click|type|fill|submit|add to cart|add to checkout|checkout|buy|book|order|sign in|log in)\b/i;
 const NON_ACTION_PATTERN =
   /\b(explain|summari[sz]e|what is|what does|analy[sz]e|review|describe|tell me|why)\b/i;
+const SHOPPING_PATTERN =
+  /\b(buy|purchase|order|add to cart|shop for|find.*price|checkout)\b/i;
 
 export class LLMClient {
   private readonly webContents: WebContents;
@@ -146,6 +149,15 @@ export class LLMClient {
     return BROWSER_ACTION_PATTERN.test(trimmed) && !NON_ACTION_PATTERN.test(trimmed);
   }
 
+  private shouldUseAgentMode(message: string): boolean {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return false;
+    }
+
+    return SHOPPING_PATTERN.test(trimmed);
+  }
+
   private async handleBrowserAutomationRequest(
     request: ChatRequest
   ): Promise<void> {
@@ -157,9 +169,16 @@ export class LLMClient {
       return;
     }
 
-    const state = await this.window.sidebar.computerUse.startSession({
-      goal: request.message.trim(),
-    });
+    // Use agent mode for shopping tasks
+    const useAgent = this.shouldUseAgentMode(request.message);
+
+    const state = useAgent
+      ? await this.window.sidebar.computerUse.startAgentSession({
+          goal: request.message.trim(),
+        })
+      : await this.window.sidebar.computerUse.startSession({
+          goal: request.message.trim(),
+        });
 
     const session =
       state.sessions.find((entry) => entry.id === state.activeSessionId) ??
@@ -182,7 +201,9 @@ export class LLMClient {
     const failedStep = session.steps.find((step) => step.status === "failed");
     const lines = [
       session.status === "completed"
-        ? "I used browser tools to carry out that task."
+        ? useAgent
+          ? "I used the autonomous agent to carry out that task."
+          : "I used browser tools to carry out that task."
         : session.status === "failed"
           ? "I started the browser task, but it failed before finishing."
           : "I started the browser task.",
@@ -413,8 +434,7 @@ export class LLMClient {
         })(settings.model);
       }
       case "ollama":
-        return createOpenAI({
-          apiKey: "ollama",
+        return createOllama({
           baseURL: settings.ollamaBaseUrl,
         })(settings.model);
       default:

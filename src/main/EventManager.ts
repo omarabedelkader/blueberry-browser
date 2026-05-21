@@ -358,11 +358,11 @@ export class EventManager {
 
     ipcMain.handle("ollama-models-list", async () => {
       const settings = this.settingsStore.getSettings();
-      const baseUrl = (settings.ollamaBaseUrl || "http://127.0.0.1:11434/v1").trim();
+      const baseUrl = (settings.ollamaBaseUrl || "http://127.0.0.1:11434").trim();
 
-      const normalizedBaseUrl = baseUrl.endsWith("/v1")
-        ? baseUrl.slice(0, -3)
-        : baseUrl.replace(/\/+$/, "");
+      const normalizedBaseUrl = baseUrl
+        .replace(/\/(?:v1|api)\/?$/, "")
+        .replace(/\/+$/, "");
 
       try {
         const response = await fetch(`${normalizedBaseUrl}/api/tags`);

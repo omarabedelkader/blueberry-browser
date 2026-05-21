@@ -1,11 +1,13 @@
 import { WebContents } from "electron";
-import { generateText, type LanguageModel } from "ai";
+import { generateText, stepCountIs, streamText, type LanguageModel } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { createOllama } from "ai-sdk-ollama";
 import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Tab } from "./Tab";
 import { AISettingsStore } from "./AISettings";
+import { buildShoppingTools, SHOPPING_AGENT_PROMPT } from "./AgentTools";
 
 dotenv.config({ path: join(__dirname, "../../.env") });
 
@@ -199,6 +201,142 @@ export class ComputerUseManager {
     }
   }
 
+  async startAgentSession(request: ComputerUseRequest): Promise<ComputerUseState> {
+    const session: ComputerUseSession = {
+      id: `session-${++this.sessionCounter}`,
+      goal: request.goal.trim(),
+      summary: "Starting autonomous agent",
+      status: "running",
+      createdAt: Date.now(),
+      currentUrl: this.getActiveTab()?.url ?? null,
+      screenshot: await this.captureActiveTabScreenshot(),
+      logs: ["Agent is analyzing the task and taking action."],
+      steps: [],
+      generatedScript: null,
+    };
+
+    this.state.sessions = [session, ...this.state.sessions].slice(0, 6);
+    this.state.activeSessionId = session.id;
+    this.state.isRunning = true;
+    this.emitState();
+
+    try {
+      await this.runAgentLoop(session, request.goal);
+      return this.state;
+    } catch (error) {
+      session.status = "failed";
+      session.logs.push(`Agent failed: ${this.getErrorMessage(error)}`);
+      this.state.isRunning = false;
+      this.emitState();
+      return this.state;
+    }
+  }
+
+  private async runAgentLoop(
+    session: ComputerUseSession,
+    goal: string
+  ): Promise<void> {
+    let model: LanguageModel;
+    try {
+      model = this.initializeModel();
+    } catch (error) {
+      throw new Error(`LLM not configured: ${this.getErrorMessage(error)}`);
+    }
+
+    const tools = buildShoppingTools(
+      this.getActiveTab,
+      this.webContents,
+      this.settingsStore
+    ) as any;
+
+    let stepCounter = 0;
+    let totalSteps = 0;
+    const MAX_STEPS = 25;
+
+    try {
+      const result = await streamText({
+        model,
+        system: SHOPPING_AGENT_PROMPT,
+        prompt: goal,
+        tools,
+        stopWhen: stepCountIs(MAX_STEPS),
+        temperature: 0.2,
+        onStepFinish: async (event: any) => {
+          stepCounter++;
+          const { toolCalls, toolResults, text } = event;
+          totalSteps += toolCalls.length;
+
+          // Stop if we've exceeded max steps
+          if (totalSteps >= MAX_STEPS) {
+            session.logs.push("Reached maximum step limit");
+            session.status = "completed";
+            this.state.isRunning = false;
+            return;
+          }
+
+          // Add steps for each tool call
+          for (let i = 0; i < toolCalls.length; i++) {
+            const toolCall = toolCalls[i];
+            const toolResult = toolResults[i];
+
+            const step: ComputerUseStep = {
+              id: `${session.id}-step-${stepCounter}-${i}`,
+              action: "run_script",
+              label: `${toolCall.toolName}`,
+              status: "completed",
+              result: JSON.stringify(toolResult).slice(0, 500),
+              startedAt: Date.now(),
+              completedAt: Date.now(),
+            };
+
+            session.steps.push(step);
+            session.logs.push(`Tool: ${toolCall.toolName}`);
+
+            // Check for handoff
+            if (toolCall.toolName === "handOffToUser") {
+              session.status = "completed";
+              session.summary = "Agent handed off to user";
+              this.state.isRunning = false;
+            }
+          }
+
+          if (text) {
+            session.logs.push(`Agent: ${text.slice(0, 200)}`);
+          }
+
+          session.currentUrl = this.getActiveTab()?.url ?? null;
+          session.screenshot = await this.captureActiveTabScreenshot();
+          this.emitState();
+
+          // Send step update to UI
+          this.webContents.send("agent-step", {
+            toolCalls,
+            toolResults,
+            text,
+          });
+        },
+      });
+
+      // Consume the stream
+      for await (const _chunk of result.textStream) {
+        // Stream is being processed in onStepFinish
+      }
+
+      if (session.status !== "completed") {
+        session.status = "completed";
+        session.logs.push("Agent completed the task.");
+      }
+      this.state.isRunning = false;
+      this.emitState();
+    } catch (error) {
+      session.status = "failed";
+      session.logs.push(`Error: ${this.getErrorMessage(error)}`);
+      this.state.isRunning = false;
+      this.emitState();
+      throw error;
+    }
+  }
+
   async generateScript(
     request: ScriptGenerationRequest
   ): Promise<ComputerUseState> {
@@ -244,29 +382,28 @@ export class ComputerUseManager {
     );
   }
 
-  private initializeModel(): LanguageModel | null {
+  private initializeModel(): LanguageModel {
     const settings = this.settingsStore.getSettings();
 
     switch (settings.provider) {
       case "anthropic":
         if (!process.env.ANTHROPIC_API_KEY) {
-          return null;
+          throw new Error("ANTHROPIC_API_KEY not configured");
         }
         return anthropic(settings.model);
       case "openai":
         if (!process.env.OPENAI_API_KEY) {
-          return null;
+          throw new Error("OPENAI_API_KEY not configured");
         }
         return createOpenAI({
           apiKey: process.env.OPENAI_API_KEY,
         })(settings.model);
       case "ollama":
-        return createOpenAI({
-          apiKey: "ollama",
+        return createOllama({
           baseURL: settings.ollamaBaseUrl,
         })(settings.model);
       default:
-        return null;
+        throw new Error("No LLM provider configured");
     }
   }
 
@@ -279,9 +416,11 @@ export class ComputerUseManager {
     if (heuristicPlan) {
       return heuristicPlan;
     }
-    const model = this.initializeModel();
 
-    if (!model) {
+    let model: LanguageModel;
+    try {
+      model = this.initializeModel();
+    } catch {
       return this.buildFallbackPlan(goal, snapshot.url);
     }
 
@@ -318,9 +457,11 @@ export class ComputerUseManager {
 
   private async buildScript(goal: string): Promise<string> {
     const snapshot = await this.getPageSnapshot();
-    const model = this.initializeModel();
-
-    if (!model) {
+    
+    let model: LanguageModel;
+    try {
+      model = this.initializeModel();
+    } catch {
       return `// No LLM configured. Start with this scaffold.
 async function runBlueberryTask() {
   const root = document.body;
@@ -408,7 +549,7 @@ runBlueberryTask();`;
         {
           action: "wait",
           label: "Wait for search results",
-          ms: 1400,
+          ms: 3000,
         },
         {
           action: "run_script",
@@ -529,7 +670,13 @@ runBlueberryTask();`;
         if (!step.script) {
           throw new Error("Script step is missing code.");
         }
-        return this.stringifyExecutionResult(await tab.runJs(step.script));
+        try {
+          return this.stringifyExecutionResult(await tab.runJs(step.script));
+        } catch (error) {
+          throw new Error(
+            `Script failed to execute, this normally means an error was thrown. ${this.getErrorMessage(error)}`
+          );
+        }
       default:
         throw new Error(`Unsupported action: ${String(step.action)}`);
     }
@@ -674,17 +821,59 @@ runBlueberryTask();`;
   private buildClickFirstGoogleResultScript(): string {
     return `(() => {
       ${this.buildCursorHelpers()}
-      const selectors = [
-        '#search a[href]:has(h3)',
-        'a[href]:has(h3)',
-        'a[data-ved][href]'
-      ];
-      const link = selectors
-        .map((selector) => document.querySelector(selector))
-        .find((entry) => entry instanceof HTMLAnchorElement);
-      if (!(link instanceof HTMLAnchorElement)) {
-        throw new Error("No Google search result link found.");
+      
+      // Try to find the first real search result link
+      // Strategy 1: Look for links with h3 headings (typical result structure)
+      let link = document.querySelector('#search a[href]:has(h3)');
+      
+      // Strategy 2: Look for any link with h3 inside
+      if (!link) {
+        link = document.querySelector('a[href]:has(h3)');
       }
+      
+      // Strategy 3: Look in the main results container
+      if (!link) {
+        const rso = document.querySelector('#rso');
+        if (rso) {
+          const links = Array.from(rso.querySelectorAll('a[href]'));
+          link = links.find(a => {
+            const href = a.getAttribute('href');
+            return href && 
+                   href.startsWith('http') && 
+                   !href.includes('google.com/search') &&
+                   !href.includes('google.com/url?') &&
+                   a.querySelector('h3');
+          });
+        }
+      }
+      
+      // Strategy 4: Find any link that looks like a result
+      if (!link) {
+        const allLinks = Array.from(document.querySelectorAll('a[href]'));
+        link = allLinks.find(a => {
+          const href = a.getAttribute('href');
+          const text = a.textContent || '';
+          return href && 
+                 href.startsWith('http') && 
+                 !href.includes('google.com') &&
+                 !href.includes('youtube.com/results') &&
+                 text.length > 10 &&
+                 a.querySelector('h3');
+        });
+      }
+      
+      if (!link || !(link instanceof HTMLAnchorElement)) {
+        // Debug info
+        const debugInfo = {
+          hasSearch: !!document.querySelector('#search'),
+          hasRso: !!document.querySelector('#rso'),
+          h3Count: document.querySelectorAll('h3').length,
+          linkCount: document.querySelectorAll('a[href]').length,
+          url: window.location.href
+        };
+        throw new Error("No Google search result link found. Debug: " + JSON.stringify(debugInfo));
+      }
+      
       link.scrollIntoView({ block: "center", behavior: "instant" });
       window.__blueberryMoveCursorToElement(link);
       link.click();
