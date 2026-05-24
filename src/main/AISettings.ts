@@ -14,20 +14,23 @@ export interface AISettings {
   searchEngine: SearchEngine;
   autoRouteToSandbox: boolean;
   sidebarWidth: number;
+  memoryEnabled: boolean;
 }
 
 const DEFAULTS: Record<LLMProvider, { model: string }> = {
-  ollama: { model: "" },
+  ollama: { model: "gemma4:e2b" },
   openai: { model: "gpt-4o-mini" },
   anthropic: { model: "claude-3-5-sonnet-20241022" },
 };
 
 const LEGACY_GOOGLE_HOMEPAGE = "https://www.google.com";
 const LEGACY_DEFAULT_SEARCH_ENGINE: SearchEngine = "google";
+const LEGACY_OLLAMA_DEFAULT_MODEL = "llama3.1:8b";
 const DEFAULT_HOMEPAGE = BLUEBERRY_WELCOME_URL;
 const DEFAULT_SEARCH_ENGINE: SearchEngine = "duckduckgo";
 const DEFAULT_SIDEBAR_WIDTH = 400;
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
+const DEFAULT_MEMORY_ENABLED = true;
 
 export class AISettingsStore {
   private static instance: AISettingsStore | null = null;
@@ -71,6 +74,8 @@ export class AISettingsStore {
       sidebarWidth: this.parseSidebarWidth(
         input.sidebarWidth ?? this.settings.sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH
       ),
+      memoryEnabled:
+        input.memoryEnabled ?? this.settings.memoryEnabled ?? DEFAULT_MEMORY_ENABLED,
     };
 
     if (input.provider && !input.model) {
@@ -87,16 +92,23 @@ export class AISettingsStore {
     try {
       const raw = readFileSync(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as Partial<AISettings>;
+      const parsedProvider = this.parseProvider(parsed.provider) ?? fallback.provider;
       const parsedSearchEngine =
         this.parseSearchEngine(parsed.searchEngine) ?? fallback.searchEngine;
       const parsedHomepage = parsed.homepage?.trim() || fallback.homepage;
+      const parsedModel = parsed.model?.trim() || "";
       const shouldMigrateLegacyDefaults =
         parsedHomepage === LEGACY_GOOGLE_HOMEPAGE &&
         parsedSearchEngine === LEGACY_DEFAULT_SEARCH_ENGINE;
+      const shouldMigrateLegacyOllamaModel =
+        parsedProvider === "ollama" &&
+        (parsedModel.length === 0 || parsedModel === LEGACY_OLLAMA_DEFAULT_MODEL);
 
       return {
-        provider: this.parseProvider(parsed.provider) ?? fallback.provider,
-        model: parsed.model?.trim() || fallback.model,
+        provider: parsedProvider,
+        model: shouldMigrateLegacyOllamaModel
+          ? DEFAULTS.ollama.model
+          : parsedModel || fallback.model,
         ollamaBaseUrl: this.normalizeOllamaBaseUrl(
           parsed.ollamaBaseUrl ?? fallback.ollamaBaseUrl
         ),
@@ -109,6 +121,10 @@ export class AISettingsStore {
             ? parsed.autoRouteToSandbox
             : fallback.autoRouteToSandbox,
         sidebarWidth: this.parseSidebarWidth(parsed.sidebarWidth ?? fallback.sidebarWidth),
+        memoryEnabled:
+          typeof parsed.memoryEnabled === "boolean"
+            ? parsed.memoryEnabled
+            : fallback.memoryEnabled,
       };
     } catch {
       return fallback;
@@ -135,6 +151,7 @@ export class AISettingsStore {
         DEFAULT_SEARCH_ENGINE,
       autoRouteToSandbox: true,
       sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+      memoryEnabled: DEFAULT_MEMORY_ENABLED,
     };
   }
 

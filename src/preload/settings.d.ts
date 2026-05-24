@@ -8,6 +8,15 @@ interface AppSettings {
   searchEngine: "google" | "duckduckgo" | "bing";
   autoRouteToSandbox: boolean;
   sidebarWidth: number;
+  memoryEnabled: boolean;
+}
+
+interface MemoryEntry {
+  id: string;
+  content: string;
+  category: "preference" | "profile" | "workflow" | "instruction";
+  createdAt: number;
+  updatedAt: number;
 }
 
 interface SettingsAPI {
@@ -16,6 +25,9 @@ interface SettingsAPI {
   setSidebarWidth: (width: number) => Promise<number>;
   closeBrowserSettings: () => Promise<void>;
   listOllamaModels: () => Promise<{ ok: boolean; models: string[]; error: string | null }>;
+  getMemories: () => Promise<MemoryEntry[]>;
+  deleteMemory: (id: string) => Promise<MemoryEntry[]>;
+  clearMemories: () => Promise<MemoryEntry[]>;
   onAppSettingsUpdated: (callback: (settings: AppSettings) => void) => void;
   removeAppSettingsUpdatedListener: () => void;
 }

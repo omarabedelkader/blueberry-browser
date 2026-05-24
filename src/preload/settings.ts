@@ -9,6 +9,7 @@ interface AppSettings {
   searchEngine: "google" | "duckduckgo" | "bing";
   autoRouteToSandbox: boolean;
   sidebarWidth: number;
+  memoryEnabled: boolean;
 }
 
 const settingsAPI = {
@@ -21,6 +22,9 @@ const settingsAPI = {
     electronAPI.ipcRenderer.invoke("close-browser-settings"),
   listOllamaModels: () =>
     electronAPI.ipcRenderer.invoke("ollama-models-list"),
+  getMemories: () => electronAPI.ipcRenderer.invoke("memory-get"),
+  deleteMemory: (id: string) => electronAPI.ipcRenderer.invoke("memory-delete", id),
+  clearMemories: () => electronAPI.ipcRenderer.invoke("memory-clear"),
   onAppSettingsUpdated: (callback: (settings: AppSettings) => void) => {
     electronAPI.ipcRenderer.on("app-settings-updated", (_, settings) =>
       callback(settings)

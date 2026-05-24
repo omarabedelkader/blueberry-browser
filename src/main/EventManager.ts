@@ -2,6 +2,7 @@ import { ipcMain, WebContents } from "electron";
 import type { Window } from "./Window";
 import { AISettingsStore } from "./AISettings";
 import { logger } from "./Logger";
+import { MemoryStore } from "./MemoryStore";
 
 const SENSITIVE_CHANNELS = new Set([
   "sidebar-chat-message",
@@ -54,13 +55,18 @@ export class EventManager {
     "get-page-content",
     "get-page-text",
     "get-current-url",
+    "memory-get",
+    "memory-delete",
+    "memory-clear",
   ] as const;
   private readonly getMainWindow: () => Window | null;
   private settingsStore: AISettingsStore;
+  private memoryStore: MemoryStore;
 
   constructor(getMainWindow: () => Window | null) {
     this.getMainWindow = getMainWindow;
     this.settingsStore = AISettingsStore.getInstance();
+    this.memoryStore = MemoryStore.getInstance();
     this.removeRegisteredHandlers();
     this.setupEventHandlers();
   }
@@ -99,6 +105,9 @@ export class EventManager {
     // AI settings
     this.handleAISettingsEvents();
 
+    // Memory events
+    this.handleMemoryEvents();
+
     // Page content events
     this.handlePageContentEvents();
 
@@ -107,6 +116,23 @@ export class EventManager {
 
     // Debug events
     this.handleDebugEvents();
+  }
+
+  private handleMemoryEvents(): void {
+    ipcMain.handle("memory-get", () => {
+      this.logChannel("memory-get");
+      return this.memoryStore.getMemories();
+    });
+
+    ipcMain.handle("memory-delete", (_, id: string) => {
+      logger.info("Memory deleted");
+      return this.memoryStore.deleteMemory(id);
+    });
+
+    ipcMain.handle("memory-clear", () => {
+      logger.info("Memory cleared");
+      return this.memoryStore.clear();
+    });
   }
 
   private handleTabEvents(): void {
@@ -142,6 +168,8 @@ export class EventManager {
         title: tab.title,
         url: tab.url,
         isActive: activeTabId === tab.id,
+        canGoBack: tab.webContents.navigationHistory.canGoBack(),
+        canGoForward: tab.webContents.navigationHistory.canGoForward(),
       }));
     });
 

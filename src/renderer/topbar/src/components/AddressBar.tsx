@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { ArrowLeft, ArrowRight, RefreshCw, Loader2, PanelLeftClose, PanelLeft, Cog } from 'lucide-react'
+import { ArrowLeft, ArrowRight, RefreshCw, Loader2, PanelLeftClose, PanelLeft } from 'lucide-react'
 import { useBrowser } from '../contexts/BrowserContext'
 import { ToolBarButton } from '../components/ToolBarButton'
 import { Favicon } from '../components/Favicon'
@@ -94,8 +94,8 @@ export const AddressBar: React.FC = () => {
         }
     }
 
-    const canGoBack = activeTab !== null
-    const canGoForward = activeTab !== null
+    const canGoBack = Boolean(activeTab?.canGoBack)
+    const canGoForward = Boolean(activeTab?.canGoForward)
 
     // Extract domain and title for display
     const getDomain = () => {
@@ -136,12 +136,6 @@ export const AddressBar: React.FC = () => {
         // Send IPC event to toggle sidebar
         if (window.topBarAPI) {
             window.topBarAPI.toggleSidebar()
-        }
-    }
-
-    const openSettings = () => {
-        if (window.topBarAPI) {
-            window.topBarAPI.openBrowserSettings()
         }
     }
 
@@ -231,10 +225,6 @@ export const AddressBar: React.FC = () => {
 
             {/* Actions Menu */}
             <div className="flex items-center gap-1 app-region-no-drag">
-                <ToolBarButton
-                    Icon={Cog}
-                    onClick={openSettings}
-                />
                 <ToolBarButton
                     Icon={isSidebarOpen ? PanelLeftClose : PanelLeft}
                     onClick={toggleSidebar}

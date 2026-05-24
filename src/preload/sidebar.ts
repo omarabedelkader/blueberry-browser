@@ -34,6 +34,7 @@ interface AISettings {
   searchEngine: "google" | "duckduckgo" | "bing";
   autoRouteToSandbox: boolean;
   sidebarWidth: number;
+  memoryEnabled: boolean;
 }
 
 // Sidebar specific APIs

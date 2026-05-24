@@ -8,6 +8,7 @@ import { join } from "path";
 import type { Window } from "./Window";
 import { AISettingsStore, type SearchEngine } from "./AISettings";
 import { logger } from "./Logger";
+import { MemoryStore, type MemoryEntry } from "./MemoryStore";
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -27,14 +28,20 @@ interface SearchResultCandidate {
   title: string;
 }
 
+type ParsedLocalCommand =
+  | { type: "help" }
+  | { type: "remember"; content: string };
+
 const MAX_CONTEXT_LENGTH = 4000;
 const DEFAULT_TEMPERATURE = 0.7;
 const BROWSER_ACTION_PATTERN =
-  /\b(open|go to|visit|search|find|click|type|fill|submit|add to cart|add to checkout|checkout|buy|book|order|sign in|log in)\b/i;
+  /\b(open|go to|visit|search|find|click|type|fill|submit|add to cart|add to checkout|checkout|buy|book|order|sign in|log in|compare|research|browse|navigate|look through|look across|collect|gather|track down|work through)\b/i;
 const NON_ACTION_PATTERN =
   /\b(explain|summari[sz]e|what is|what does|analy[sz]e|review|describe|tell me|why)\b/i;
 const SHOPPING_PATTERN =
   /\b(buy|purchase|order|add to cart|shop for|find.*price|checkout)\b/i;
+const AUTONOMOUS_BROWSER_PATTERN =
+  /\b(compare|collect|gather|research|browse|navigate|look through|look across|fill out|fill in|continue|proceed|apply|track down|work through|step by step)\b/i;
 const DIRECT_SEARCH_PATTERNS = [
   /^\s*search(?:\s+for)?\s+(.+?)\s*$/i,
   /^\s*look\s+up\s+(.+?)\s*$/i,
@@ -45,11 +52,13 @@ export class LLMClient {
   private readonly webContents: WebContents;
   private window: Window | null = null;
   private readonly settingsStore: AISettingsStore;
+  private readonly memoryStore: MemoryStore;
   private messages: CoreMessage[] = [];
 
   constructor(webContents: WebContents) {
     this.webContents = webContents;
     this.settingsStore = AISettingsStore.getInstance();
+    this.memoryStore = MemoryStore.getInstance();
 
     this.logInitializationStatus();
   }
@@ -78,6 +87,12 @@ export class LLMClient {
 
   async sendChatMessage(request: ChatRequest): Promise<void> {
     try {
+      const localCommand = this.parseLocalCommand(request.message);
+      if (localCommand) {
+        this.handleLocalCommand(localCommand, request);
+        return;
+      }
+
       // Get screenshot from active tab if available
       let screenshot: string | null = null;
       if (this.window) {
@@ -116,6 +131,7 @@ export class LLMClient {
       };
       
       this.messages.push(userMessage);
+      this.captureMemoriesFromUserMessage(request.message);
 
       // Send updated messages to renderer
       this.sendMessagesToRenderer();
@@ -170,7 +186,74 @@ export class LLMClient {
       return false;
     }
 
-    return SHOPPING_PATTERN.test(trimmed);
+    return SHOPPING_PATTERN.test(trimmed) || AUTONOMOUS_BROWSER_PATTERN.test(trimmed);
+  }
+
+  private parseLocalCommand(message: string): ParsedLocalCommand | null {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (trimmed === "/help") {
+      return { type: "help" };
+    }
+
+    if (trimmed.startsWith("@")) {
+      const content = trimmed.slice(1).trim();
+      if (!content) {
+        return null;
+      }
+      return { type: "remember", content };
+    }
+
+    return null;
+  }
+
+  private handleLocalCommand(
+    command: ParsedLocalCommand,
+    request: ChatRequest
+  ): void {
+    if (command.type === "help") {
+      const response = [
+        "Available local commands:",
+        "/help",
+        "Show available local commands.",
+        "",
+        "@something to remember",
+        "Save a memory directly without sending it to the model.",
+      ].join("\n");
+      this.appendAssistantMessage(response);
+      this.sendStreamChunk(request.messageId, {
+        content: response,
+        isComplete: true,
+      });
+      return;
+    }
+
+    if (command.type === "remember") {
+      if (!this.settingsStore.getSettings().memoryEnabled) {
+        const response =
+          "Memory is currently turned off in Settings, so I did not save that.";
+        this.appendAssistantMessage(response);
+        this.sendStreamChunk(request.messageId, {
+          content: response,
+          isComplete: true,
+        });
+        return;
+      }
+
+      const memory = this.memoryStore.upsertMemory(
+        command.content,
+        "instruction"
+      );
+      const response = `Saved to memory: ${memory.content}`;
+      this.appendAssistantMessage(response);
+      this.sendStreamChunk(request.messageId, {
+        content: response,
+        isComplete: true,
+      });
+    }
   }
 
   private async handleDirectSearchRequest(
@@ -381,7 +464,7 @@ export class LLMClient {
       return;
     }
 
-    // Use agent mode for shopping tasks
+    // Use agent mode for shopping and broader multi-step browsing tasks
     const useAgent = this.shouldUseAgentMode(request.message);
     this.sendThought(
       useAgent
@@ -501,6 +584,14 @@ export class LLMClient {
       parts.push(`\nPage content (text):\n${truncatedText}`);
     }
 
+    const settings = this.settingsStore.getSettings();
+    if (settings.memoryEnabled) {
+      const memorySummary = this.buildMemorySummary(this.memoryStore.getMemories());
+      if (memorySummary) {
+        parts.push(`\nRemembered user context:\n${memorySummary}`);
+      }
+    }
+
     parts.push(
       "\nPlease provide helpful, accurate, and contextual responses about the current webpage.",
       "If the user asks about specific content, refer to the page content and/or screenshot provided."
@@ -512,6 +603,84 @@ export class LLMClient {
   private truncateText(text: string, maxLength: number): string {
     if (text.length <= maxLength) return text;
     return text.substring(0, maxLength) + "...";
+  }
+
+  private buildMemorySummary(memories: MemoryEntry[]): string {
+    return memories
+      .slice(0, 12)
+      .map((entry) => `- [${entry.category}] ${entry.content}`)
+      .join("\n");
+  }
+
+  private captureMemoriesFromUserMessage(message: string): void {
+    if (!this.settingsStore.getSettings().memoryEnabled) {
+      return;
+    }
+
+    const extracted = this.extractMemories(message);
+    for (const memory of extracted) {
+      this.memoryStore.upsertMemory(memory.content, memory.category);
+    }
+  }
+
+  private extractMemories(
+    message: string
+  ): Array<{ content: string; category: MemoryEntry["category"] }> {
+    const memories: Array<{ content: string; category: MemoryEntry["category"] }> = [];
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return memories;
+    }
+
+    const patterns: Array<{
+      regex: RegExp;
+      category: MemoryEntry["category"];
+      formatter?: (value: string) => string;
+    }> = [
+      {
+        regex: /\bremember that\s+(.+)$/i,
+        category: "instruction",
+      },
+      {
+        regex: /\bmy name is\s+(.+)$/i,
+        category: "profile",
+        formatter: (value) => `User name: ${value}`,
+      },
+      {
+        regex: /\bi want\s+(.+)$/i,
+        category: "preference",
+        formatter: (value) => `User wants ${value}`,
+      },
+      {
+        regex: /\bi do not want\s+(.+)$/i,
+        category: "preference",
+        formatter: (value) => `User does not want ${value}`,
+      },
+      {
+        regex: /\bprefer\s+(.+)$/i,
+        category: "preference",
+        formatter: (value) => `User prefers ${value}`,
+      },
+      {
+        regex: /\balways\s+(.+)$/i,
+        category: "workflow",
+        formatter: (value) => `Workflow preference: ${value}`,
+      },
+    ];
+
+    for (const pattern of patterns) {
+      const match = trimmed.match(pattern.regex);
+      const value = match?.[1]?.trim().replace(/[.!?]+$/, "");
+      if (!value || value.length < 3) {
+        continue;
+      }
+      memories.push({
+        content: pattern.formatter ? pattern.formatter(value) : value,
+        category: pattern.category,
+      });
+    }
+
+    return memories.slice(0, 4);
   }
 
   private async streamResponse(

@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Globe,
   LayoutPanelLeft,
+  MemoryStick,
   Moon,
   Search,
   Sun,
@@ -17,7 +18,8 @@ type AppSettings = Awaited<ReturnType<typeof window.settingsAPI.getAppSettings>>
 type OllamaModelsResult = Awaited<
   ReturnType<typeof window.settingsAPI.listOllamaModels>
 >;
-type SettingsTab = "general" | "ai" | "workspace";
+type MemoryEntry = Awaited<ReturnType<typeof window.settingsAPI.getMemories>>[number];
+type SettingsTab = "general" | "ai" | "workspace" | "memory";
 
 type TabConfig = {
   id: SettingsTab;
@@ -45,6 +47,12 @@ const tabs: TabConfig[] = [
     description: "Sidebar width and sandbox routing",
     icon: LayoutPanelLeft,
   },
+  {
+    id: "memory",
+    label: "Memory",
+    description: "Remembered preferences and instructions",
+    icon: MemoryStick,
+  },
 ];
 
 const cardClassName =
@@ -56,6 +64,7 @@ export const SettingsApp: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [memories, setMemories] = useState<MemoryEntry[]>([]);
   const [ollamaState, setOllamaState] = useState<{
     loading: boolean;
     error: string | null;
@@ -64,8 +73,12 @@ export const SettingsApp: React.FC = () => {
 
   useEffect(() => {
     const load = async () => {
-      const next = await window.settingsAPI.getAppSettings();
+      const [next, savedMemories] = await Promise.all([
+        window.settingsAPI.getAppSettings(),
+        window.settingsAPI.getMemories(),
+      ]);
       setSettings(next);
+      setMemories(savedMemories);
     };
 
     void load();
@@ -571,6 +584,88 @@ export const SettingsApp: React.FC = () => {
                       Automatically switch to sandbox for code, file, and data tasks
                     </span>
                   </label>
+                </section>
+              </>
+            )}
+
+            {activeTab === "memory" && (
+              <>
+                <section className={cardClassName}>
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex size-10 items-center justify-center rounded-2xl bg-secondary">
+                      <MemoryStick className="size-4 text-foreground" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">Memory</h3>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        BlueBerry stores distilled preferences and instructions here, not full chat logs.
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="mt-4 flex items-start gap-3 rounded-[22px] border border-border bg-background/70 p-4 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={settings.memoryEnabled}
+                      onChange={(event) =>
+                        void updateSettings({ memoryEnabled: event.target.checked })
+                      }
+                      className="mt-0.5"
+                    />
+                    <span>Enable persistent memory for future conversations and tasks</span>
+                  </label>
+                </section>
+
+                <section className={cardClassName}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">Saved memories</h3>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        Review what the browser remembers. You can delete items or clear everything.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        void window.settingsAPI.clearMemories().then(setMemories)
+                      }
+                      disabled={memories.length === 0}
+                    >
+                      Clear All
+                    </Button>
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    {memories.length > 0 ? (
+                      memories.map((memory) => (
+                        <div
+                          key={memory.id}
+                          className="flex items-start justify-between gap-3 rounded-[20px] border border-border bg-background/80 p-4"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm text-foreground">{memory.content}</p>
+                            <p className="mt-1 text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                              {memory.category}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              void window.settingsAPI.deleteMemory(memory.id).then(setMemories)
+                            }
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-[20px] border border-dashed border-border bg-background/60 p-4 text-sm text-muted-foreground">
+                        No memories saved yet.
+                      </div>
+                    )}
+                  </div>
                 </section>
               </>
             )}

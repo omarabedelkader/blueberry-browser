@@ -8,6 +8,17 @@ type TabInfo = Awaited<ReturnType<typeof window.sidebarAPI.getActiveTabInfo>>;
 type ChatHistoryMessage = Awaited<ReturnType<typeof window.sidebarAPI.getMessages>>[number];
 type ComputerUseState = Awaited<ReturnType<typeof window.sidebarAPI.getComputerUseState>>;
 
+const COMMAND_SUGGESTIONS = [
+  {
+    command: "/help",
+    description: "Show available local commands.",
+  },
+  {
+    command: "@remember this",
+    description: "Save a memory directly without sending it to the model first.",
+  },
+] as const;
+
 const getActiveSession = (state: ComputerUseState | null) =>
   state?.sessions.find((session) => session.id === state.activeSessionId) ??
   state?.sessions[0] ??
@@ -184,6 +195,7 @@ export const Chat: React.FC = () => {
   );
 
   const isComposerLocked = isSending || isComputerUseRunning;
+  const showCommandSuggestions = draft.trim() === "/" || draft.trim().startsWith("/");
   const activeComputerUseSession = getActiveSession(computerUseState);
   const liveThoughtLines = useMemo(() => {
     if (streamingThought.trim()) {
@@ -342,15 +354,15 @@ export const Chat: React.FC = () => {
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (isComposerLocked) {
-                return;
-              }
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                event.preventDefault();
-                void sendMessage(draft);
-              }
-            }}
+              onKeyDown={(event) => {
+                if (isComposerLocked) {
+                  return;
+                }
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void sendMessage(draft);
+                }
+              }}
             rows={4}
             className="min-h-[112px] w-full resize-none bg-transparent text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
             placeholder={
@@ -360,6 +372,35 @@ export const Chat: React.FC = () => {
             }
             disabled={isComposerLocked}
           />
+          {showCommandSuggestions && !isComposerLocked && (
+            <div className="mt-3 rounded-[20px] border border-border bg-background/95 p-2 shadow-sm">
+              <p className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Commands
+              </p>
+              <div className="space-y-1">
+                {COMMAND_SUGGESTIONS.map((item) => (
+                  <button
+                    key={item.command}
+                    type="button"
+                    onClick={() => setDraft(item.command)}
+                    className="flex w-full items-start justify-between gap-3 rounded-[14px] px-3 py-2 text-left transition-colors hover:bg-secondary"
+                  >
+                    <span className="text-sm font-medium text-foreground">
+                      {item.command}
+                    </span>
+                    <span className="max-w-[70%] text-xs leading-5 text-muted-foreground">
+                      {item.description}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {!showCommandSuggestions && !isComposerLocked && (
+            <p className="mt-3 px-1 text-xs text-muted-foreground">
+              Type <code className="rounded bg-secondary px-1 py-0.5">/help</code> to see available commands.
+            </p>
+          )}
           <div className="mt-3 flex items-center justify-end gap-2">
             <Button
               variant="ghost"

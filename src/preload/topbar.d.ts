@@ -5,6 +5,8 @@ interface TabInfo {
   title: string;
   url: string;
   isActive: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
 }
 
 interface AppSettings {
@@ -15,6 +17,7 @@ interface AppSettings {
   searchEngine: "google" | "duckduckgo" | "bing";
   autoRouteToSandbox: boolean;
   sidebarWidth: number;
+  memoryEnabled: boolean;
 }
 
 interface TopBarAPI {

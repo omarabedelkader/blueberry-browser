@@ -5,6 +5,8 @@ interface TabInfo {
     title: string
     url: string
     isActive: boolean
+    canGoBack: boolean
+    canGoForward: boolean
 }
 
 interface BrowserContextType {
@@ -189,4 +191,3 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
         </BrowserContext.Provider>
     )
 }
-
