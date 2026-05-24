@@ -8,6 +8,7 @@ import { join } from "path";
 import type { Tab } from "./Tab";
 import { AISettingsStore } from "./AISettings";
 import { buildShoppingTools, SHOPPING_AGENT_PROMPT } from "./AgentTools";
+import { logger } from "./Logger";
 
 dotenv.config({ path: join(__dirname, "../../.env") });
 
@@ -130,6 +131,7 @@ export class ComputerUseManager {
   }
 
   async startSession(request: ComputerUseRequest): Promise<ComputerUseState> {
+    logger.info("Computer use session started");
     const session: ComputerUseSession = {
       id: `session-${++this.sessionCounter}`,
       goal: request.goal.trim(),
@@ -176,6 +178,7 @@ export class ComputerUseManager {
           session.logs.push(result);
           this.emitState();
         } catch (error) {
+          logger.error("Computer use step failed", error, { step: step.label });
           step.status = "failed";
           step.result = this.getErrorMessage(error);
           step.completedAt = Date.now();
@@ -193,6 +196,7 @@ export class ComputerUseManager {
       this.emitState();
       return this.state;
     } catch (error) {
+      logger.error("Computer use planning failed", error);
       session.status = "failed";
       session.logs.push(`Planning failed: ${this.getErrorMessage(error)}`);
       this.state.isRunning = false;
@@ -202,6 +206,7 @@ export class ComputerUseManager {
   }
 
   async startAgentSession(request: ComputerUseRequest): Promise<ComputerUseState> {
+    logger.info("Autonomous agent session started");
     const session: ComputerUseSession = {
       id: `session-${++this.sessionCounter}`,
       goal: request.goal.trim(),
@@ -224,6 +229,7 @@ export class ComputerUseManager {
       await this.runAgentLoop(session, request.goal);
       return this.state;
     } catch (error) {
+      logger.error("Autonomous agent session failed", error);
       session.status = "failed";
       session.logs.push(`Agent failed: ${this.getErrorMessage(error)}`);
       this.state.isRunning = false;
@@ -268,6 +274,7 @@ export class ComputerUseManager {
 
           // Stop if we've exceeded max steps
           if (totalSteps >= MAX_STEPS) {
+            logger.warn("Agent reached maximum step limit");
             session.logs.push("Reached maximum step limit");
             session.status = "completed";
             this.state.isRunning = false;
@@ -329,6 +336,7 @@ export class ComputerUseManager {
       this.state.isRunning = false;
       this.emitState();
     } catch (error) {
+      logger.error("Agent loop failed", error);
       session.status = "failed";
       session.logs.push(`Error: ${this.getErrorMessage(error)}`);
       this.state.isRunning = false;
@@ -352,6 +360,7 @@ export class ComputerUseManager {
     }
 
     session.logs.push("Generating a browser-side snippet for the current site.");
+    logger.info("Browser-side snippet generation started");
     this.emitState();
 
     try {
@@ -363,6 +372,7 @@ export class ComputerUseManager {
       };
       session.logs.push("Snippet ready.");
     } catch (error) {
+      logger.error("Snippet generation failed", error);
       session.logs.push(`Snippet generation failed: ${this.getErrorMessage(error)}`);
     }
 

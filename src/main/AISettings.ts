@@ -1,6 +1,7 @@
 import { app } from "electron";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
+import { BLUEBERRY_WELCOME_URL } from "./WelcomePage";
 
 export type LLMProvider = "ollama" | "openai" | "anthropic";
 export type SearchEngine = "google" | "duckduckgo" | "bing";
@@ -21,8 +22,10 @@ const DEFAULTS: Record<LLMProvider, { model: string }> = {
   anthropic: { model: "claude-3-5-sonnet-20241022" },
 };
 
-const DEFAULT_HOMEPAGE = "https://www.google.com";
-const DEFAULT_SEARCH_ENGINE: SearchEngine = "google";
+const LEGACY_GOOGLE_HOMEPAGE = "https://www.google.com";
+const LEGACY_DEFAULT_SEARCH_ENGINE: SearchEngine = "google";
+const DEFAULT_HOMEPAGE = BLUEBERRY_WELCOME_URL;
+const DEFAULT_SEARCH_ENGINE: SearchEngine = "duckduckgo";
 const DEFAULT_SIDEBAR_WIDTH = 400;
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 
@@ -84,15 +87,23 @@ export class AISettingsStore {
     try {
       const raw = readFileSync(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as Partial<AISettings>;
+      const parsedSearchEngine =
+        this.parseSearchEngine(parsed.searchEngine) ?? fallback.searchEngine;
+      const parsedHomepage = parsed.homepage?.trim() || fallback.homepage;
+      const shouldMigrateLegacyDefaults =
+        parsedHomepage === LEGACY_GOOGLE_HOMEPAGE &&
+        parsedSearchEngine === LEGACY_DEFAULT_SEARCH_ENGINE;
+
       return {
         provider: this.parseProvider(parsed.provider) ?? fallback.provider,
         model: parsed.model?.trim() || fallback.model,
         ollamaBaseUrl: this.normalizeOllamaBaseUrl(
           parsed.ollamaBaseUrl ?? fallback.ollamaBaseUrl
         ),
-        homepage: parsed.homepage?.trim() || fallback.homepage,
-        searchEngine:
-          this.parseSearchEngine(parsed.searchEngine) ?? fallback.searchEngine,
+        homepage: shouldMigrateLegacyDefaults ? DEFAULT_HOMEPAGE : parsedHomepage,
+        searchEngine: shouldMigrateLegacyDefaults
+          ? DEFAULT_SEARCH_ENGINE
+          : parsedSearchEngine,
         autoRouteToSandbox:
           typeof parsed.autoRouteToSandbox === "boolean"
             ? parsed.autoRouteToSandbox

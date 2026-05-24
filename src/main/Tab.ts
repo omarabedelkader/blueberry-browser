@@ -1,4 +1,9 @@
 import { NativeImage, WebContentsView } from "electron";
+import { AISettingsStore } from "./AISettings";
+import {
+  BLUEBERRY_WELCOME_URL,
+  buildWelcomePageHtml,
+} from "./WelcomePage";
 
 export class Tab {
   private webContentsView: WebContentsView;
@@ -37,10 +42,16 @@ export class Tab {
 
     // Update URL when navigation occurs
     this.webContentsView.webContents.on("did-navigate", (_, url) => {
+      if (this._url === BLUEBERRY_WELCOME_URL && url.startsWith("data:text/html")) {
+        return;
+      }
       this._url = url;
     });
 
     this.webContentsView.webContents.on("did-navigate-in-page", (_, url) => {
+      if (this._url === BLUEBERRY_WELCOME_URL && url.startsWith("data:text/html")) {
+        return;
+      }
       this._url = url;
     });
   }
@@ -99,6 +110,14 @@ export class Tab {
 
   loadURL(url: string): Promise<void> {
     this._url = url;
+    if (url === BLUEBERRY_WELCOME_URL) {
+      const settings = AISettingsStore.getInstance().getSettings();
+      return this.webContentsView.webContents.loadURL(
+        `data:text/html;charset=UTF-8,${encodeURIComponent(
+          buildWelcomePageHtml(settings.searchEngine)
+        )}`
+      );
+    }
     return this.webContentsView.webContents.loadURL(url);
   }
 

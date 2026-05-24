@@ -2,8 +2,11 @@ import React from 'react'
 import { BrowserProvider } from './contexts/BrowserContext'
 import { TabBar } from './components/TabBar'
 import { AddressBar } from './components/AddressBar'
+import { useDarkMode } from '@common/hooks/useDarkMode'
 
 export const TopBarApp: React.FC = () => {
+    useDarkMode()
+
     return (
         <BrowserProvider>
             <div className="flex flex-col bg-background select-none">

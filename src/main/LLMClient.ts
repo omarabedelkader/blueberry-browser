@@ -7,6 +7,7 @@ import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
 import { AISettingsStore, type SearchEngine } from "./AISettings";
+import { logger } from "./Logger";
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -63,11 +64,11 @@ export class LLMClient {
     const initialized = Boolean(this.initializeModel());
 
     if (initialized) {
-      console.log(
+      logger.info(
         `✅ LLM Client initialized with ${provider} provider using model: ${model}`
       );
     } else {
-      console.error(
+      logger.error(
         initialized
           ? `❌ LLM Client initialization failed for ${provider}:${model}.`
           : `❌ LLM Client initialization failed. Check your selected provider settings and API keys.`
@@ -86,7 +87,7 @@ export class LLMClient {
             const image = await activeTab.screenshot();
             screenshot = image.toDataURL();
           } catch (error) {
-            console.error("Failed to capture screenshot:", error);
+            logger.error("Failed to capture screenshot", error);
           }
         }
       }
@@ -140,7 +141,7 @@ export class LLMClient {
       const messages = await this.prepareMessagesWithContext(request);
       await this.streamResponse(messages, request.messageId, model);
     } catch (error) {
-      console.error("Error in LLM request:", error);
+      logger.error("Error in LLM request", error);
       this.handleStreamError(error, request.messageId);
     }
   }
@@ -363,7 +364,7 @@ export class LLMClient {
         return candidate as SearchResultCandidate;
       }
     } catch (error) {
-      console.error("Failed to inspect search results:", error);
+      logger.error("Failed to inspect search results", error);
     }
 
     return null;
@@ -469,7 +470,7 @@ export class LLMClient {
         try {
           pageText = await activeTab.getTabText();
         } catch (error) {
-          console.error("Failed to get page text:", error);
+          logger.error("Failed to get page text", error);
         }
       }
     }
@@ -580,7 +581,7 @@ export class LLMClient {
   }
 
   private handleStreamError(error: unknown, messageId: string): void {
-    console.error("Error streaming from LLM:", error);
+    logger.error("Error streaming from LLM", error);
 
     const errorMessage = this.getErrorMessage(error);
     this.sendErrorMessage(messageId, errorMessage);

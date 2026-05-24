@@ -3,8 +3,9 @@ import { ArrowLeft, ArrowRight, RefreshCw, Loader2, PanelLeftClose, PanelLeft, C
 import { useBrowser } from '../contexts/BrowserContext'
 import { ToolBarButton } from '../components/ToolBarButton'
 import { Favicon } from '../components/Favicon'
-import { DarkModeToggle } from '../components/DarkModeToggle'
 import { cn } from '@common/lib/utils'
+
+const INTERNAL_WELCOME_URL = 'blueberry://welcome'
 
 export const AddressBar: React.FC = () => {
     const { activeTab, navigateToUrl, goBack, goForward, reload, isLoading } = useBrowser()
@@ -99,6 +100,7 @@ export const AddressBar: React.FC = () => {
     // Extract domain and title for display
     const getDomain = () => {
         if (!activeTab?.url) return ''
+        if (activeTab.url === INTERNAL_WELCOME_URL) return 'BlueBerry Browser'
         try {
             const urlObj = new URL(activeTab.url)
             return urlObj.hostname.replace('www.', '')
@@ -109,6 +111,7 @@ export const AddressBar: React.FC = () => {
 
     const getPath = () => {
         if (!activeTab?.url) return ''
+        if (activeTab.url === INTERNAL_WELCOME_URL) return ''
         try {
             const urlObj = new URL(activeTab.url)
             return urlObj.pathname + urlObj.search + urlObj.hash
@@ -119,6 +122,7 @@ export const AddressBar: React.FC = () => {
 
     const getFavicon = () => {
         if (!activeTab?.url) return null
+        if (activeTab.url === INTERNAL_WELCOME_URL) return null
         try {
             const domain = new URL(activeTab.url).hostname
             return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
@@ -171,7 +175,7 @@ export const AddressBar: React.FC = () => {
             {isFocused ? (
                 // Expanded State
                 <form onSubmit={handleSubmit} className="flex-1 min-w-0 max-w-full">
-                    <div className="bg-background rounded-lg shadow-md p-1 dark:bg-secondary">
+                    <div className="h-8 rounded-md border border-border bg-card px-3 shadow-sm transition-colors">
                         <input
                             type="text"
                             value={url}
@@ -179,7 +183,7 @@ export const AddressBar: React.FC = () => {
                             onFocus={handleFocus}
                             onBlur={handleBlur}
                             onKeyDown={handleKeyDown}
-                            className="w-full px-1 py-0.5 text-xs outline-none bg-transparent text-foreground truncate"
+                            className="h-full w-full bg-transparent text-[0.8rem] text-foreground outline-none"
                             placeholder={activeTab ? "Enter URL or search term" : "No active tab"}
                             disabled={!activeTab}
                             spellCheck={false}
@@ -192,10 +196,10 @@ export const AddressBar: React.FC = () => {
                 <div
                     onClick={handleFocus}
                     className={cn(
-                        "flex-1 px-3 h-8 rounded-md cursor-text group/address-bar",
-                        "hover:bg-muted text-muted-foreground app-region-no-drag",
+                        "flex-1 px-3 h-8 rounded-md border border-border cursor-text group/address-bar",
+                        "bg-card text-muted-foreground app-region-no-drag shadow-sm",
+                        "hover:bg-card",
                         "transition-colors duration-200",
-                        "dark:hover:bg-muted/50"
                     )}
                 >
                     <div className="flex h-full items-center">
@@ -227,7 +231,6 @@ export const AddressBar: React.FC = () => {
 
             {/* Actions Menu */}
             <div className="flex items-center gap-1 app-region-no-drag">
-                <DarkModeToggle />
                 <ToolBarButton
                     Icon={Cog}
                     onClick={openSettings}
