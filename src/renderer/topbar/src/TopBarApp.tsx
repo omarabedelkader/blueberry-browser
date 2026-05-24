@@ -8,7 +8,7 @@ export const TopBarApp: React.FC = () => {
         <BrowserProvider>
             <div className="flex flex-col bg-background select-none">
                 {/* Tab Bar */}
-                <div className="w-full h-10 px-2 pt-1 flex items-center app-region-drag bg-[linear-gradient(180deg,rgba(248,250,252,0.98),rgba(235,241,248,0.96))] dark:bg-[linear-gradient(180deg,rgba(18,23,31,0.98),rgba(14,18,26,0.98))]">
+                <div className="w-full h-10 px-2 pt-1 flex items-center app-region-drag bg-background">
                     <TabBar />
                 </div>
 

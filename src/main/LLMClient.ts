@@ -6,7 +6,7 @@ import { createOllama } from "ai-sdk-ollama";
 import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
-import { AISettingsStore } from "./AISettings";
+import { AISettingsStore, type SearchEngine } from "./AISettings";
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -21,6 +21,11 @@ interface StreamChunk {
   isComplete: boolean;
 }
 
+interface SearchResultCandidate {
+  href: string;
+  title: string;
+}
+
 const MAX_CONTEXT_LENGTH = 4000;
 const DEFAULT_TEMPERATURE = 0.7;
 const BROWSER_ACTION_PATTERN =
@@ -29,6 +34,11 @@ const NON_ACTION_PATTERN =
   /\b(explain|summari[sz]e|what is|what does|analy[sz]e|review|describe|tell me|why)\b/i;
 const SHOPPING_PATTERN =
   /\b(buy|purchase|order|add to cart|shop for|find.*price|checkout)\b/i;
+const DIRECT_SEARCH_PATTERNS = [
+  /^\s*search(?:\s+for)?\s+(.+?)\s*$/i,
+  /^\s*look\s+up\s+(.+?)\s*$/i,
+  /^\s*find\s+(.+?)\s*$/i,
+] as const;
 
 export class LLMClient {
   private readonly webContents: WebContents;
@@ -109,6 +119,10 @@ export class LLMClient {
       // Send updated messages to renderer
       this.sendMessagesToRenderer();
 
+      if (await this.handleDirectSearchRequest(request)) {
+        return;
+      }
+
       if (this.shouldUseBrowserAutomation(request.message)) {
         await this.handleBrowserAutomationRequest(request);
         return;
@@ -158,6 +172,203 @@ export class LLMClient {
     return SHOPPING_PATTERN.test(trimmed);
   }
 
+  private async handleDirectSearchRequest(
+    request: ChatRequest
+  ): Promise<boolean> {
+    const query = this.extractDirectSearchQuery(request.message);
+    if (!query) {
+      return false;
+    }
+
+    if (!this.window?.activeTab) {
+      this.sendErrorMessage(
+        request.messageId,
+        "Search is unavailable because there is no active tab."
+      );
+      return true;
+    }
+
+    const searchEngine = this.settingsStore.getSettings().searchEngine;
+    const searchUrl = this.buildSearchUrl(query, searchEngine);
+    const providerLabel = this.getSearchEngineLabel(searchEngine);
+
+    this.sendThought(`Thinking about the request.\nI should search ${providerLabel} for "${query}".\n`);
+
+    try {
+      await this.window.activeTab.loadURL(searchUrl);
+    } catch (error) {
+      this.sendErrorMessage(
+        request.messageId,
+        `I tried to search for "${query}", but opening the results page failed: ${this.getErrorMessage(
+          error
+        )}`
+      );
+      return true;
+    }
+
+    this.sendThought(`Opened ${providerLabel} results.\nNow I am scanning the page for the first likely website result.\n`);
+    const firstResult = await this.findFirstSearchResult();
+    if (firstResult) {
+      try {
+        this.sendThought(`I found a promising result: "${firstResult.title}".\nOpening that website now.\n`);
+        await this.window.activeTab.loadURL(firstResult.href);
+        const response = `I searched ${providerLabel} for "${query}", scanned the results, and opened "${firstResult.title}".`;
+        this.appendAssistantMessage(response);
+        this.sendStreamChunk(request.messageId, {
+          content: response,
+          isComplete: true,
+        });
+        return true;
+      } catch (error) {
+        const response = `I searched ${providerLabel} for "${query}" and found "${firstResult.title}", but opening it failed. I left the search results page open instead.`;
+        this.appendAssistantMessage(response);
+        this.sendStreamChunk(request.messageId, {
+          content: response,
+          isComplete: true,
+        });
+        return true;
+      }
+    }
+
+    const response = `I searched ${providerLabel} for "${query}" and opened the results page. I could not confidently pick a website result yet.`;
+    this.appendAssistantMessage(response);
+    this.sendStreamChunk(request.messageId, {
+      content: response,
+      isComplete: true,
+    });
+    return true;
+  }
+
+  private extractDirectSearchQuery(message: string): string | null {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    for (const pattern of DIRECT_SEARCH_PATTERNS) {
+      const match = trimmed.match(pattern);
+      const query = match?.[1]?.trim().replace(/[?.!]+$/, "");
+      if (!query) {
+        continue;
+      }
+
+      if (/\b(on|at|in)\s+(this\s+(site|page)|here|amazon|google|bing|duckduckgo|youtube|wikipedia)\b/i.test(query)) {
+        return null;
+      }
+
+      return query;
+    }
+
+    return null;
+  }
+
+  private buildSearchUrl(query: string, searchEngine: SearchEngine): string {
+    const encodedQuery = encodeURIComponent(query);
+
+    switch (searchEngine) {
+      case "duckduckgo":
+        return `https://duckduckgo.com/?q=${encodedQuery}`;
+      case "bing":
+        return `https://www.bing.com/search?q=${encodedQuery}`;
+      case "google":
+      default:
+        return `https://www.google.com/search?q=${encodedQuery}`;
+    }
+  }
+
+  private getSearchEngineLabel(searchEngine: SearchEngine): string {
+    switch (searchEngine) {
+      case "duckduckgo":
+        return "DuckDuckGo";
+      case "bing":
+        return "Bing";
+      case "google":
+      default:
+        return "Google";
+    }
+  }
+
+  private async findFirstSearchResult(): Promise<SearchResultCandidate | null> {
+    if (!this.window?.activeTab) {
+      return null;
+    }
+
+    try {
+      const candidate = await this.window.activeTab.runJs(`
+        (() => {
+          const text = (value) => (value || "").replace(/\\s+/g, " ").trim();
+          const hostname = window.location.hostname;
+
+          const selectors = hostname.includes("google.")
+            ? ["a h3", "div[jscontroller] a h3"]
+            : hostname.includes("bing.com")
+              ? ["li.b_algo h2 a", ".b_algo h2 a"]
+              : hostname.includes("duckduckgo.com")
+                ? ["article[data-testid='result'] h2 a", "[data-testid='result-title-a']"]
+                : ["main a", "a"];
+
+          const seen = new Set();
+          const blockedHosts = [
+            "google.com",
+            "www.google.com",
+            "bing.com",
+            "www.bing.com",
+            "duckduckgo.com",
+            "www.duckduckgo.com",
+          ];
+
+          const getAnchor = (node) => {
+            if (!node) return null;
+            if (node.tagName === "A") return node;
+            return node.closest("a");
+          };
+
+          for (const selector of selectors) {
+            const nodes = Array.from(document.querySelectorAll(selector));
+            for (const node of nodes) {
+              const anchor = getAnchor(node);
+              if (!anchor) continue;
+
+              const href = anchor.href;
+              const title = text(anchor.textContent || node.textContent);
+              if (!href || !title) continue;
+              if (!/^https?:/i.test(href)) continue;
+              if (seen.has(href)) continue;
+              seen.add(href);
+
+              let url;
+              try {
+                url = new URL(href);
+              } catch {
+                continue;
+              }
+
+              if (blockedHosts.includes(url.hostname)) continue;
+              if (url.pathname.startsWith("/search")) continue;
+
+              return { href, title };
+            }
+          }
+
+          return null;
+        })();
+      `);
+
+      if (
+        candidate &&
+        typeof candidate === "object" &&
+        typeof candidate.href === "string" &&
+        typeof candidate.title === "string"
+      ) {
+        return candidate as SearchResultCandidate;
+      }
+    } catch (error) {
+      console.error("Failed to inspect search results:", error);
+    }
+
+    return null;
+  }
+
   private async handleBrowserAutomationRequest(
     request: ChatRequest
   ): Promise<void> {
@@ -171,6 +382,11 @@ export class LLMClient {
 
     // Use agent mode for shopping tasks
     const useAgent = this.shouldUseAgentMode(request.message);
+    this.sendThought(
+      useAgent
+        ? "Thinking through the task.\nThis looks like an end-to-end browsing task, so I am switching into autonomous agent mode.\n"
+        : "Thinking through the task.\nI am planning browser actions and will narrate the steps as I go.\n"
+    );
 
     const state = useAgent
       ? await this.window.sidebar.computerUse.startAgentSession({
@@ -412,6 +628,14 @@ export class LLMClient {
       messageId,
       content: chunk.content,
       isComplete: chunk.isComplete,
+    });
+  }
+
+  private sendThought(content: string): void {
+    this.webContents.send("chat-response", {
+      messageId: "agent-thinking",
+      content,
+      isComplete: false,
     });
   }
 

@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: blueberry-browser
+appId: com.blueberry.browser
+productName: BlueBerry Browser
 directories:
   buildResources: build
 files:
@@ -12,7 +12,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: blueberry-browser
+  executableName: BlueBerry Browser
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

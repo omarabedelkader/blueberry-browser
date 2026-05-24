@@ -10,7 +10,74 @@ export class AppMenu {
   }
 
   private createMenu(): void {
+    const isMac = process.platform === "darwin";
+    const viewSubmenu: Electron.MenuItemConstructorOptions[] = [
+      {
+        label: "Reload",
+        accelerator: "CmdOrCtrl+R",
+        click: () => this.handleReload(),
+      },
+      {
+        label: "Force Reload",
+        accelerator: "CmdOrCtrl+Shift+R",
+        click: () => this.handleForceReload(),
+      },
+      { type: "separator" },
+      {
+        label: "Toggle Sidebar",
+        accelerator: "CmdOrCtrl+E",
+        click: () => this.handleToggleSidebar(),
+      },
+      ...(!isMac
+        ? [
+            {
+              label: "Settings…",
+              accelerator: "CmdOrCtrl+,",
+              click: () => this.handleOpenSettings(),
+            } satisfies Electron.MenuItemConstructorOptions,
+            { type: "separator" } satisfies Electron.MenuItemConstructorOptions,
+          ]
+        : []),
+      {
+        label: "Toggle Developer Tools",
+        accelerator: isMac ? "Alt+Command+I" : "Ctrl+Shift+I",
+        click: () => this.handleToggleDevTools(),
+      },
+      {
+        label: "Toggle Fullscreen",
+        accelerator: isMac ? "Ctrl+Command+F" : "F11",
+        click: () => this.handleToggleFullscreen(),
+      },
+    ];
+
     const template: Electron.MenuItemConstructorOptions[] = [
+      ...(isMac
+        ? [
+            {
+              label: app.name,
+              submenu: [
+                {
+                  label: "About Blueberry Browser",
+                  click: () => this.handleAbout(),
+                },
+                { type: "separator" },
+                {
+                  label: "Settings…",
+                  accelerator: "CmdOrCtrl+,",
+                  click: () => this.handleOpenSettings(),
+                },
+                { type: "separator" },
+                { role: "services" },
+                { type: "separator" },
+                { role: "hide" },
+                { role: "hideOthers" },
+                { role: "unhide" },
+                { type: "separator" },
+                { role: "quit" },
+              ],
+            } satisfies Electron.MenuItemConstructorOptions,
+          ]
+        : []),
       {
         label: "File",
         submenu: [
@@ -50,42 +117,7 @@ export class AppMenu {
       },
       {
         label: "View",
-        submenu: [
-          {
-            label: "Reload",
-            accelerator: "CmdOrCtrl+R",
-            click: () => this.handleReload(),
-          },
-          {
-            label: "Force Reload",
-            accelerator: "CmdOrCtrl+Shift+R",
-            click: () => this.handleForceReload(),
-          },
-          { type: "separator" },
-          {
-            label: "Toggle Sidebar",
-            accelerator: "CmdOrCtrl+E",
-            click: () => this.handleToggleSidebar(),
-          },
-          {
-            label: "Settings…",
-            accelerator: "CmdOrCtrl+,",
-            click: () => this.handleOpenSettings(),
-          },
-          { type: "separator" },
-          {
-            label: "Toggle Developer Tools",
-            accelerator:
-              process.platform === "darwin" ? "Alt+Command+I" : "Ctrl+Shift+I",
-            click: () => this.handleToggleDevTools(),
-          },
-          {
-            label: "Toggle Fullscreen",
-            accelerator:
-              process.platform === "darwin" ? "Ctrl+Command+F" : "F11",
-            click: () => this.handleToggleFullscreen(),
-          },
-        ],
+        submenu: viewSubmenu,
       },
       {
         label: "Go",

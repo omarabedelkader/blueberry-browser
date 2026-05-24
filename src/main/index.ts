@@ -15,7 +15,7 @@ const createWindow = (): Window => {
 };
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId("com.electron");
+  electronApp.setAppUserModelId("com.blueberry.browser");
   eventManager = new EventManager(() => mainWindow);
 
   mainWindow = createWindow();

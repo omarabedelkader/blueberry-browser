@@ -6,6 +6,18 @@ import { cn } from "@common/lib/utils";
 type SidebarLayout = Awaited<ReturnType<typeof window.sidebarAPI.getSidebarLayout>>;
 type TabInfo = Awaited<ReturnType<typeof window.sidebarAPI.getActiveTabInfo>>;
 type ChatHistoryMessage = Awaited<ReturnType<typeof window.sidebarAPI.getMessages>>[number];
+type ComputerUseState = Awaited<ReturnType<typeof window.sidebarAPI.getComputerUseState>>;
+
+const getActiveSession = (state: ComputerUseState | null) =>
+  state?.sessions.find((session) => session.id === state.activeSessionId) ??
+  state?.sessions[0] ??
+  null;
+
+const getThinkingLines = (text: string): string[] =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 
 const extractMessageText = (message: ChatHistoryMessage): string => {
   if (typeof message.content === "string") {
@@ -42,6 +54,9 @@ export const Chat: React.FC = () => {
   const [tabInfo, setTabInfo] = useState<TabInfo>(null);
   const [layout, setLayout] = useState<SidebarLayout | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [isComputerUseRunning, setIsComputerUseRunning] = useState(false);
+  const [streamingThought, setStreamingThought] = useState("");
+  const [computerUseState, setComputerUseState] = useState<ComputerUseState | null>(null);
   const dragState = useRef<{
     startMouseX: number;
     startWidth: number;
@@ -52,15 +67,18 @@ export const Chat: React.FC = () => {
 
   useEffect(() => {
     const load = async () => {
-      const [history, activeBrowserTab, sidebarLayout] = await Promise.all([
+      const [history, activeBrowserTab, sidebarLayout, computerUseState] = await Promise.all([
         window.sidebarAPI.getMessages(),
         window.sidebarAPI.getActiveTabInfo(),
         window.sidebarAPI.getSidebarLayout(),
+        window.sidebarAPI.getComputerUseState(),
       ]);
 
       setMessages(history);
       setTabInfo(activeBrowserTab);
       setLayout(sidebarLayout);
+      setComputerUseState(computerUseState);
+      setIsComputerUseRunning(Boolean(computerUseState?.isRunning));
     };
 
     void load();
@@ -71,17 +89,34 @@ export const Chat: React.FC = () => {
 
     window.sidebarAPI.onMessagesUpdated((history) => {
       setMessages(history as ChatHistoryMessage[]);
-      setIsSending(false);
     });
 
-    window.sidebarAPI.onChatResponse(() => {
-      setIsSending(false);
+    window.sidebarAPI.onChatResponse((data) => {
+      if (!data.isComplete) {
+        setStreamingThought((previous) => previous + data.content);
+        return;
+      }
+
+      setStreamingThought("");
+      if (data.isComplete) {
+        setIsSending(false);
+      }
+    });
+
+    window.sidebarAPI.onComputerUseState((state) => {
+      const nextState = state as ComputerUseState | null;
+      setComputerUseState(nextState);
+      setIsComputerUseRunning(Boolean(nextState?.isRunning));
+      if (!nextState?.isRunning) {
+        setStreamingThought("");
+      }
     });
 
     return () => {
       window.clearInterval(interval);
       window.sidebarAPI.removeMessagesUpdatedListener();
       window.sidebarAPI.removeChatResponseListener();
+      window.sidebarAPI.removeComputerUseStateListener();
     };
   }, []);
 
@@ -148,9 +183,26 @@ export const Chat: React.FC = () => {
     [tabInfo?.title]
   );
 
+  const isComposerLocked = isSending || isComputerUseRunning;
+  const activeComputerUseSession = getActiveSession(computerUseState);
+  const liveThoughtLines = useMemo(() => {
+    if (streamingThought.trim()) {
+      return getThinkingLines(streamingThought);
+    }
+
+    if (activeComputerUseSession?.logs.length) {
+      return activeComputerUseSession.logs.slice(-4);
+    }
+
+    return [];
+  }, [activeComputerUseSession?.logs, streamingThought]);
+  const activeStepLabel =
+    activeComputerUseSession?.steps.find((step) => step.status === "running")?.label ?? null;
+  const thinkingTitle = isComputerUseRunning ? "Agent Working" : isSending ? "Agent Thinking" : null;
+
   const sendMessage = async (message: string) => {
     const trimmedMessage = message.trim();
-    if (!trimmedMessage || isSending) {
+    if (!trimmedMessage || isComposerLocked) {
       return;
     }
 
@@ -184,6 +236,30 @@ export const Chat: React.FC = () => {
       </div>
 
       <div ref={messagesRef} className="flex-1 overflow-y-auto px-4 py-4">
+        {thinkingTitle && liveThoughtLines.length > 0 && (
+          <div className="mb-4 rounded-[24px] border border-border bg-card p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              <LoaderCircle className="size-3.5 animate-spin" />
+              {thinkingTitle}
+            </div>
+            {activeStepLabel && (
+              <p className="mt-2 text-sm font-medium text-foreground">
+                Current step: {activeStepLabel}
+              </p>
+            )}
+            <div className="mt-3 space-y-2">
+              {liveThoughtLines.map((line, index) => (
+                <p
+                  key={`${line}-${index}`}
+                  className="rounded-2xl border border-border/70 bg-background px-3 py-2 text-sm leading-6 text-foreground"
+                >
+                  {line}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
         {messages.length > 0 ? (
           <div className="space-y-3">
             {messages.map((message, index) => {
@@ -243,12 +319,33 @@ export const Chat: React.FC = () => {
         )}
       </div>
 
+      {thinkingTitle && (
+        <div className="pointer-events-none absolute bottom-[150px] left-1/2 z-30 -translate-x-1/2">
+          <div className="animate-[floatBusy_2.6s_ease-in-out_infinite] rounded-full border border-border bg-background/95 px-4 py-2 shadow-[0_16px_40px_rgba(15,23,42,0.16)] backdrop-blur">
+            <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+              <span className="flex size-5 items-center justify-center rounded-full border border-border bg-card">
+                <LoaderCircle className="size-3 animate-spin" />
+              </span>
+              <span>{thinkingTitle}</span>
+              {activeStepLabel ? (
+                <span className="max-w-[220px] truncate text-muted-foreground">
+                  {activeStepLabel}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="border-t border-border/80 px-4 py-4">
         <div className="rounded-[28px] border border-border bg-card p-3 shadow-sm">
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
+              if (isComposerLocked) {
+                return;
+              }
               if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                 event.preventDefault();
                 void sendMessage(draft);
@@ -256,13 +353,19 @@ export const Chat: React.FC = () => {
             }}
             rows={4}
             className="min-h-[112px] w-full resize-none bg-transparent text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
-            placeholder="Ask about the current page..."
+            placeholder={
+              isComposerLocked
+                ? "Agent is working. Wait until it finishes..."
+                : "Ask about the current page..."
+            }
+            disabled={isComposerLocked}
           />
           <div className="mt-3 flex items-center justify-end gap-2">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setDraft(suggestion)}
+              disabled={isComposerLocked}
               title="Insert page summary prompt"
             >
               <Plus className="size-4" />
@@ -270,10 +373,10 @@ export const Chat: React.FC = () => {
             <Button
               size="icon"
               onClick={() => void sendMessage(draft)}
-              disabled={!draft.trim() || isSending}
+              disabled={!draft.trim() || isComposerLocked}
               title="Send"
             >
-              {isSending ? (
+              {isComposerLocked ? (
                 <LoaderCircle className="size-4 animate-spin" />
               ) : (
                 <Send className="size-4" />
