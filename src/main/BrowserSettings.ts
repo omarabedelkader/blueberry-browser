@@ -32,7 +32,7 @@ export class BrowserSettings {
         preload: join(__dirname, "../preload/settings.js"),
         nodeIntegration: false,
         contextIsolation: true,
-        sandbox: true,
+        sandbox: false,
       },
     });
 

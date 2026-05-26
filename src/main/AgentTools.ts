@@ -14,9 +14,10 @@ const CHECKOUT_BLOCKER_PATTERNS =
 export function buildShoppingTools(
   getActiveTab: () => Tab | null,
   webContents: WebContents,
-  settingsStore: AISettingsStore
+  settingsStore: AISettingsStore,
 ): any {
-  const defineTool = (config: Record<string, unknown>) => tool(config as any) as any;
+  const defineTool = (config: Record<string, unknown>) =>
+    tool(config as any) as any;
 
   const activeTab = () => {
     const tab = getActiveTab();
@@ -62,6 +63,7 @@ export function buildShoppingTools(
     execute: async () => {
       const elements = await activeTab().runJs(`
         (() => {
+          const text = (value) => (value || '').replace(/\\s+/g, ' ').trim();
           const nodes = document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"]');
           return Array.from(nodes).slice(0, 200).map((el, i) => {
             const rect = el.getBoundingClientRect();
@@ -71,7 +73,7 @@ export function buildShoppingTools(
               id: i,
               tag: el.tagName.toLowerCase(),
               role: el.getAttribute('role') || null,
-              text: (el.innerText || el.value || el.placeholder || el.ariaLabel || '').trim().slice(0, 120),
+              text: text(el.innerText || el.value || el.placeholder || el.getAttribute('aria-label') || '').slice(0, 120),
               type: el.type || null,
               href: el.href || null,
             };
@@ -80,6 +82,66 @@ export function buildShoppingTools(
       `);
       return { url: activeTab().url, title: activeTab().title, elements };
     },
+  });
+
+  const inspectPage = defineTool({
+    description:
+      "Return a general page summary with headings, likely primary actions, forms, visible links, and important text snippets.",
+    inputSchema: z.object({}),
+    execute: async () =>
+      activeTab().runJs(`
+        (() => {
+          const text = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+          const isVisible = (el) => {
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 8 && rect.height > 8 && style.visibility !== 'hidden' && style.display !== 'none';
+          };
+
+          const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
+            .filter((el) => isVisible(el))
+            .map((el) => text(el.textContent))
+            .filter(Boolean)
+            .slice(0, 10);
+
+          const links = Array.from(document.querySelectorAll('a[href]'))
+            .filter((el) => isVisible(el))
+            .map((el) => ({
+              text: text(el.textContent || el.getAttribute('aria-label') || ''),
+              href: el.href || null,
+            }))
+            .filter((entry) => entry.text.length > 0)
+            .slice(0, 20);
+
+          const actions = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'))
+            .filter((el) => isVisible(el))
+            .map((el) => text(el.innerText || el.value || el.getAttribute('aria-label') || ''))
+            .filter(Boolean)
+            .slice(0, 20);
+
+          const forms = Array.from(document.querySelectorAll('input, select, textarea'))
+            .filter((el) => isVisible(el))
+            .map((el) => ({
+              tag: el.tagName.toLowerCase(),
+              type: el.type || null,
+              name: el.name || null,
+              placeholder: text(el.placeholder || el.getAttribute('aria-label') || ''),
+            }))
+            .slice(0, 20);
+
+          const bodyText = text(document.body.innerText).slice(0, 3000);
+
+          return {
+            url: window.location.href,
+            title: document.title,
+            headings,
+            actions,
+            forms,
+            links,
+            textPreview: bodyText,
+          };
+        })()
+      `),
   });
 
   const scanCommercePage = defineTool({
@@ -171,7 +233,7 @@ export function buildShoppingTools(
     inputSchema: z.object({ id: z.number() }),
     execute: async ({ id }: { id: number }) => {
       await activeTab().runJs(
-        `document.querySelector('[data-agent-id="${id}"]')?.click()`
+        `document.querySelector('[data-agent-id="${id}"]')?.click()`,
       );
       await wait(800);
       return { ok: true, url: activeTab().url };
@@ -247,6 +309,51 @@ export function buildShoppingTools(
     },
   });
 
+  const openMatchingLink = defineTool({
+    description:
+      "Open the best visible link or button whose text matches the requested target text.",
+    inputSchema: z.object({
+      targetText: z.string(),
+      exact: z.boolean().optional(),
+    }),
+    execute: async ({
+      targetText,
+      exact,
+    }: {
+      targetText: string;
+      exact?: boolean;
+    }) => {
+      const result = await activeTab().runJs(`
+        (() => {
+          const targetText = ${JSON.stringify(targetText)}.trim().toLowerCase();
+          const exact = ${exact ? "true" : "false"};
+          const norm = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+          const nodes = Array.from(document.querySelectorAll('a[href], button, [role="button"]'));
+          const candidates = nodes.map((el) => {
+            const rect = el.getBoundingClientRect();
+            if (rect.width < 8 || rect.height < 8) return null;
+            const label = norm(el.innerText || el.textContent || el.getAttribute('aria-label') || '');
+            if (!label) return null;
+            const normalizedLabel = label.toLowerCase();
+            const matches = exact ? normalizedLabel === targetText : normalizedLabel.includes(targetText);
+            if (!matches) return null;
+            let score = exact ? 20 : 10;
+            if (el.tagName === 'A') score += 2;
+            if (normalizedLabel.startsWith(targetText)) score += 4;
+            return { el, label, href: el.href || null, score };
+          }).filter(Boolean).sort((a, b) => b.score - a.score);
+          const target = candidates[0];
+          if (!target?.el) throw new Error('No matching link or button found.');
+          target.el.scrollIntoView({ block: 'center', behavior: 'instant' });
+          target.el.click();
+          return { label: target.label, href: target.href };
+        })()
+      `);
+      await wait(1500);
+      return { ok: true, opened: result, url: activeTab().url };
+    },
+  });
+
   const typeIntoElement = defineTool({
     description:
       "Type text into an input element by agent ID. Optionally press Enter after.",
@@ -255,7 +362,15 @@ export function buildShoppingTools(
       text: z.string(),
       submit: z.boolean().optional(),
     }),
-    execute: async ({ id, text, submit }: { id: number; text: string; submit?: boolean }) => {
+    execute: async ({
+      id,
+      text,
+      submit,
+    }: {
+      id: number;
+      text: string;
+      submit?: boolean;
+    }) => {
       // Safety check: prevent filling payment fields
       const elementInfo = await activeTab().runJs(`
         (() => {
@@ -277,7 +392,7 @@ export function buildShoppingTools(
           elementInfo.autocomplete?.startsWith("cc-")
         ) {
           throw new Error(
-            "Refusing to fill payment field. Use handOffToUser instead."
+            "Refusing to fill payment field. Use handOffToUser instead.",
           );
         }
       }
@@ -336,13 +451,204 @@ export function buildShoppingTools(
     },
   });
 
+  const goBack = defineTool({
+    description: "Go back to the previous page if browser history allows it.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      const tab = activeTab();
+      if (!tab.webContents.navigationHistory.canGoBack()) {
+        throw new Error("Cannot go back from the current page.");
+      }
+      tab.goBack();
+      await wait(1500);
+      return { ok: true, url: activeTab().url, title: activeTab().title };
+    },
+  });
+
+  const reloadPage = defineTool({
+    description: "Reload the current page and wait for it to settle.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      activeTab().reload();
+      await wait(1800);
+      return { ok: true, url: activeTab().url, title: activeTab().title };
+    },
+  });
+
+  const findOnPage = defineTool({
+    description:
+      "Find the best visible headings, text snippets, links, or buttons matching a query on the current page.",
+    inputSchema: z.object({ query: z.string() }),
+    execute: async ({ query }: { query: string }) =>
+      activeTab().runJs(`
+        (() => {
+          const query = ${JSON.stringify(query)}.trim().toLowerCase();
+          const norm = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+          const isVisible = (el) => {
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 8 && rect.height > 8 && style.visibility !== 'hidden' && style.display !== 'none';
+          };
+
+          const nodes = Array.from(document.querySelectorAll('h1, h2, h3, h4, p, li, a, button, label, span')).filter((el) => isVisible(el));
+          const matches = nodes.map((el) => {
+            const text = norm(el.textContent || el.getAttribute('aria-label') || '');
+            if (!text) return null;
+            const haystack = text.toLowerCase();
+            if (!haystack.includes(query)) return null;
+            let score = 0;
+            if (haystack === query) score += 20;
+            if (haystack.startsWith(query)) score += 10;
+            if (el.tagName === 'H1' || el.tagName === 'H2') score += 6;
+            if (el.tagName === 'A' || el.tagName === 'BUTTON') score += 4;
+            score += Math.max(0, 40 - Math.abs(text.length - query.length));
+            return {
+              tag: el.tagName.toLowerCase(),
+              text: text.slice(0, 220),
+              href: el instanceof HTMLAnchorElement ? el.href : null,
+              score,
+            };
+          }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 12);
+
+          return {
+            url: window.location.href,
+            title: document.title,
+            query,
+            matches,
+          };
+        })()
+      `),
+  });
+
+  const typeIntoBestField = defineTool({
+    description:
+      "Find the best visible input or textarea for the requested field and type text into it.",
+    inputSchema: z.object({
+      field: z.string(),
+      text: z.string(),
+      submit: z.boolean().optional(),
+    }),
+    execute: async ({
+      field,
+      text,
+      submit,
+    }: {
+      field: string;
+      text: string;
+      submit?: boolean;
+    }) => {
+      const match = await activeTab().runJs(`
+        (() => {
+          const field = ${JSON.stringify(field)}.trim().toLowerCase();
+          const norm = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+          const isVisible = (el) => {
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 24 && rect.height > 18 && style.visibility !== 'hidden' && style.display !== 'none';
+          };
+          const getLabelText = (el) => {
+            const labels = [];
+            if (el.labels) {
+              labels.push(...Array.from(el.labels).map((label) => norm(label.textContent || '')));
+            }
+            if (el.id) {
+              const label = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+              if (label) labels.push(norm(label.textContent || ''));
+            }
+            return labels.filter(Boolean).join(' ');
+          };
+
+          const nodes = Array.from(document.querySelectorAll('input, textarea')).filter((el) => isVisible(el));
+          const ranked = nodes.map((el, index) => {
+            const descriptor = [
+              el.name || '',
+              el.id || '',
+              el.placeholder || '',
+              el.autocomplete || '',
+              el.getAttribute('aria-label') || '',
+              getLabelText(el),
+              el.type || '',
+            ].join(' ');
+            const haystack = norm(descriptor).toLowerCase();
+            if (!haystack) return null;
+            let score = 0;
+            if (haystack.includes(field)) score += 12;
+            if (haystack.startsWith(field)) score += 6;
+            if (/search|query|find/.test(field) && /(search|query|find|q)/.test(haystack)) score += 12;
+            if (/email/.test(field) && /(email|e-mail)/.test(haystack)) score += 12;
+            if (/name/.test(field) && /(name|full name|first name|last name)/.test(haystack)) score += 8;
+            if (/address/.test(field) && /(address|street|city|zip|postal)/.test(haystack)) score += 8;
+            if (/message|comment/.test(field) && /(message|comment|details)/.test(haystack)) score += 8;
+            if (!score) return null;
+            el.setAttribute('data-agent-best-field', String(index));
+            return {
+              index,
+              descriptor,
+              score,
+            };
+          }).filter(Boolean).sort((a, b) => b.score - a.score);
+
+          return ranked[0] || null;
+        })()
+      `);
+
+      if (!match) {
+        throw new Error(`No suitable field found for "${field}".`);
+      }
+
+      if (
+        PAYMENT_FIELD_PATTERNS.test(
+          `${field} ${match.descriptor ?? ""}`.toLowerCase(),
+        )
+      ) {
+        throw new Error(
+          "Refusing to fill payment field. Use handOffToUser instead.",
+        );
+      }
+
+      await activeTab().runJs(`
+        (() => {
+          const el = document.querySelector('[data-agent-best-field="${match.index}"]');
+          if (!el) throw new Error('best field no longer exists');
+          el.focus();
+          el.value = ${JSON.stringify(text)};
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          ${
+            submit
+              ? `if (el.form?.requestSubmit) {
+            el.form.requestSubmit();
+          } else {
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+          }`
+              : ""
+          }
+        })()
+      `);
+      await wait(1200);
+      return {
+        ok: true,
+        field,
+        matchedField: match.descriptor,
+        url: activeTab().url,
+      };
+    },
+  });
+
   const waitFor = defineTool({
     description: "Wait for a CSS selector to appear (max 10s).",
     inputSchema: z.object({
       selector: z.string(),
       timeoutMs: z.number().optional(),
     }),
-    execute: async ({ selector, timeoutMs = 10000 }: { selector: string; timeoutMs?: number }) =>
+    execute: async ({
+      selector,
+      timeoutMs = 10000,
+    }: {
+      selector: string;
+      timeoutMs?: number;
+    }) =>
       activeTab().runJs(`
         new Promise((resolve, reject) => {
           const start = Date.now();
@@ -362,7 +668,7 @@ export function buildShoppingTools(
     inputSchema: z.object({ amount: z.number() }),
     execute: async ({ amount }: { amount: number }) => {
       await activeTab().runJs(
-        `window.scrollBy(0, window.innerHeight * ${amount})`
+        `window.scrollBy(0, window.innerHeight * ${amount})`,
       );
       await wait(400);
       return { ok: true };
@@ -392,13 +698,7 @@ export function buildShoppingTools(
       query: z.string().optional(),
       index: z.number().int().min(0).max(9).optional(),
     }),
-    execute: async ({
-      query,
-      index,
-    }: {
-      query?: string;
-      index?: number;
-    }) => {
+    execute: async ({ query, index }: { query?: string; index?: number }) => {
       const result = await activeTab().runJs(`
         (() => {
           const query = (${JSON.stringify(query ?? "")} || "").toLowerCase();
@@ -521,7 +821,13 @@ export function buildShoppingTools(
       reason: z.string(),
       pageSummary: z.string(),
     }),
-    execute: async ({ reason, pageSummary }: { reason: string; pageSummary: string }) => {
+    execute: async ({
+      reason,
+      pageSummary,
+    }: {
+      reason: string;
+      pageSummary: string;
+    }) => {
       webContents.send("agent-handoff", {
         reason,
         pageSummary,
@@ -536,13 +842,19 @@ export function buildShoppingTools(
     navigate,
     webSearch,
     observePage,
+    inspectPage,
     scanCommercePage,
     readPage,
     screenshot,
     clickElement,
     clickBestMatch,
+    openMatchingLink,
     typeIntoElement,
+    typeIntoBestField,
     searchCurrentSite,
+    goBack,
+    reloadPage,
+    findOnPage,
     waitFor,
     scroll,
     openSearchResult,
@@ -554,15 +866,48 @@ export function buildShoppingTools(
   };
 }
 
-async function extractSearchResults(tab: Tab): Promise<
-  Array<{ title: string; url: string }>
-> {
+async function extractSearchResults(
+  tab: Tab,
+): Promise<Array<{ title: string; url: string }>> {
   try {
     return await tab.runJs(`
-      Array.from(document.querySelectorAll('a h3')).slice(0, 10).map(h => ({
-        title: h.innerText,
-        url: h.closest('a')?.href,
-      })).filter(r => r.url)
+      (() => {
+        const text = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+        const hostname = window.location.hostname;
+        const selectors = hostname.includes('google.')
+          ? ['a h3', 'div[jscontroller] a h3']
+          : hostname.includes('bing.com')
+            ? ['li.b_algo h2 a', '.b_algo h2 a']
+            : hostname.includes('duckduckgo.com')
+              ? ["article[data-testid='result'] h2 a", "[data-testid='result-title-a']"]
+              : ['main a', 'a'];
+
+        const seen = new Set();
+        const results = [];
+
+        const getAnchor = (node) => {
+          if (!node) return null;
+          if (node.tagName === 'A') return node;
+          return node.closest('a');
+        };
+
+        for (const selector of selectors) {
+          const nodes = Array.from(document.querySelectorAll(selector));
+          for (const node of nodes) {
+            const anchor = getAnchor(node);
+            if (!anchor?.href) continue;
+            if (!/^https?:/i.test(anchor.href)) continue;
+            if (seen.has(anchor.href)) continue;
+            seen.add(anchor.href);
+            const title = text(anchor.textContent || node.textContent);
+            if (!title) continue;
+            results.push({ title, url: anchor.href });
+            if (results.length >= 10) return results;
+          }
+        }
+
+        return results;
+      })()
     `);
   } catch {
     return [];
@@ -577,23 +922,27 @@ If the user asks a conversational question that requires looking through website
 
 Workflow:
 1. If you do not already know the right site, use webSearch.
-2. Use scanCommercePage immediately after navigation to understand the page and spot blockers.
-3. Prefer higher-level tools first: searchCurrentSite, openSearchResult, openProductCandidate, clickBestMatch, advanceCheckout, extractCartSummary.
+2. After landing on a page, inspect it with inspectPage or scanCommercePage before acting blindly.
+3. Prefer higher-level tools first: searchCurrentSite, openSearchResult, openProductCandidate, openMatchingLink, clickBestMatch, findOnPage, typeIntoBestField, advanceCheckout, extractCartSummary.
 4. Use observePage before low-level clickElement or typeIntoElement actions to get fresh element IDs.
-5. Use the site's own search box to find the product; verify the item matches the user's request (size, color, model).
-6. Add the item to the cart.
-7. Go to the cart/checkout page.
-8. Call handOffToUser with a clear summary of the cart contents and total.
+5. Re-check the page after major actions. If a step did not visibly advance the task, try a different tool, goBack, or reloadPage.
+6. For shopping tasks, use the site's own search box to find the product and verify the item matches the user's request (size, color, model).
+7. Add the item to the cart.
+8. Go to the cart/checkout page.
+9. Call handOffToUser with a clear summary of the cart contents and total.
 
 NEVER attempt to enter payment, card numbers, full addresses, OTP codes, or click "Place order".
 
 Rules:
 - One tool call per turn. After each tool result, decide the next step.
-- Always check detectBlockers or scanCommercePage when the page changes significantly.
+- Always check detectBlockers or inspectPage/scanCommercePage when the page changes significantly.
 - Element IDs from observePage become stale after navigation; re-observe.
 - If you hit a login wall, captcha, or 2FA, handOffToUser immediately.
 - Prefer advancing to checkout and stopping before final payment submission.
 - When the task is informational, keep browsing until you have enough evidence to answer well.
+- For informational tasks, use inspectPage, readPage, findOnPage, openMatchingLink, and openSearchResult to gather evidence before concluding.
+- If the user names a destination page or section, try openMatchingLink before falling back to low-level actions.
+- If a click path or search path fails, recover with a different query, openMatchingLink, findOnPage, goBack, reloadPage, or typeIntoBestField.
 - Confirm price and item before adding to cart.
 - Be patient: wait for pages to load, scroll if needed to find elements.
 - If a step fails, try an alternative approach before giving up.`;

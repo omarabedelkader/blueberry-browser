@@ -1,0 +1,8 @@
+- AI Panel
+- fine tuning model 
+- tool calling and agent backend
+- automatic update 
+- automatic summariy at the end 
+- capturing a screenshot of the current page 
+- memory ( word detection )
+- 

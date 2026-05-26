@@ -8,6 +8,10 @@ import { join } from "path";
 import type { Tab } from "./Tab";
 import { AISettingsStore } from "./AISettings";
 import { buildShoppingTools, SHOPPING_AGENT_PROMPT } from "./AgentTools";
+import {
+  buildFallbackAgentReport,
+  buildProgressSummary,
+} from "./agentSessionSummary";
 import { logger } from "./Logger";
 
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -66,6 +70,7 @@ interface ComputerUseSession {
   logs: string[];
   steps: ComputerUseStep[];
   generatedScript: GeneratedScript | null;
+  finalReport: string | null;
 }
 
 interface ComputerUseState {
@@ -97,6 +102,9 @@ Rules:
 - Prefer stable CSS selectors.
 - Use "press" for keyboard actions like Enter, Tab, Escape, or ArrowDown.
 - If the task is unclear, gather context first with extract_text.
+- Prefer moving the browser toward the user's goal rather than just reading the page.
+- Verify that the page changed in the expected direction after navigation or major actions.
+- If the user gave a target site, bias toward that site instead of general search.
 - Use run_script only when it is meaningfully better than click/type.
 - Blueberry also has a local sandbox for code, file, spreadsheet, and data tasks.
 - Available sandbox tools are: notifyUser, currentPage, listScopedFiles, readScopedFile, writeScopedFile, useMcp.
@@ -108,6 +116,17 @@ Return only JavaScript. No markdown fences.
 The code will run inside the current webpage with access to the DOM.
 Use async patterns when needed and add concise comments only where they help.
 Favor robust selectors and readable structure.`;
+
+const AGENT_REPORT_PROMPT = `You are writing the final answer for Blueberry's browser agent.
+Use the browsing evidence already collected.
+
+Rules:
+- If the task was informational, answer directly first and support it with the strongest evidence.
+- If the task was navigational, explain what page or section was reached and what remains.
+- If the task was transactional, summarize current state, blockers, and the user's next action.
+- If evidence is incomplete, say so explicitly.
+- Do not mention tool names.
+- Keep the answer concise, concrete, and useful.`;
 
 export class ComputerUseManager {
   private readonly webContents: WebContents;
@@ -143,6 +162,7 @@ export class ComputerUseManager {
       logs: ["Inspecting the active page and drafting a plan."],
       steps: [],
       generatedScript: null,
+      finalReport: null,
     };
 
     this.state.sessions = [session, ...this.state.sessions].slice(0, 6);
@@ -205,7 +225,9 @@ export class ComputerUseManager {
     }
   }
 
-  async startAgentSession(request: ComputerUseRequest): Promise<ComputerUseState> {
+  async startAgentSession(
+    request: ComputerUseRequest,
+  ): Promise<ComputerUseState> {
     logger.info("Autonomous agent session started");
     const session: ComputerUseSession = {
       id: `session-${++this.sessionCounter}`,
@@ -218,6 +240,7 @@ export class ComputerUseManager {
       logs: ["Agent is analyzing the task and taking action."],
       steps: [],
       generatedScript: null,
+      finalReport: null,
     };
 
     this.state.sessions = [session, ...this.state.sessions].slice(0, 6);
@@ -240,7 +263,7 @@ export class ComputerUseManager {
 
   private async runAgentLoop(
     session: ComputerUseSession,
-    goal: string
+    goal: string,
   ): Promise<void> {
     let model: LanguageModel;
     try {
@@ -252,18 +275,27 @@ export class ComputerUseManager {
     const tools = buildShoppingTools(
       this.getActiveTab,
       this.webContents,
-      this.settingsStore
+      this.settingsStore,
     ) as any;
+    const snapshot = await this.getPageSnapshot();
+    const prompt = [
+      `User goal: ${goal}`,
+      `Current URL: ${snapshot.url ?? "unknown"}`,
+      `Current title: ${snapshot.title ?? "unknown"}`,
+      `Current page text preview:\n${snapshot.textPreview || "No page text available."}`,
+      "Think step by step. Prefer high-level tools first. Re-check the page after major changes. If the task becomes blocked by login, captcha, verification, or payment, hand off clearly to the user.",
+      "Solve the task instead of narrating it. If one approach fails, recover with a different page inspection, link selection, search strategy, or field match before giving up.",
+    ].join("\n\n");
 
     let stepCounter = 0;
     let totalSteps = 0;
-    const MAX_STEPS = 25;
+    const MAX_STEPS = 35;
 
     try {
       const result = await streamText({
         model,
         system: SHOPPING_AGENT_PROMPT,
-        prompt: goal,
+        prompt,
         tools,
         stopWhen: stepCountIs(MAX_STEPS),
         temperature: 0.2,
@@ -289,7 +321,7 @@ export class ComputerUseManager {
             const step: ComputerUseStep = {
               id: `${session.id}-step-${stepCounter}-${i}`,
               action: "run_script",
-              label: `${toolCall.toolName}`,
+              label: this.describeToolCall(toolCall.toolName, toolCall.input),
               status: "completed",
               result: JSON.stringify(toolResult).slice(0, 500),
               startedAt: Date.now(),
@@ -298,11 +330,21 @@ export class ComputerUseManager {
 
             session.steps.push(step);
             session.logs.push(`Tool: ${toolCall.toolName}`);
+            session.summary = buildProgressSummary(
+              session.goal,
+              session.steps,
+              this.getActiveTab()?.url ?? null,
+            );
 
             // Check for handoff
             if (toolCall.toolName === "handOffToUser") {
               session.status = "completed";
-              session.summary = "Agent handed off to user";
+              session.finalReport = buildFallbackAgentReport(
+                session.goal,
+                this.getActiveTab()?.url ?? null,
+                session.steps,
+              );
+              session.summary = session.finalReport;
               this.state.isRunning = false;
             }
           }
@@ -333,12 +375,24 @@ export class ComputerUseManager {
         session.status = "completed";
         session.logs.push("Agent completed the task.");
       }
+      session.finalReport = await this.buildAgentReport(session);
+      session.summary = session.finalReport;
       this.state.isRunning = false;
       this.emitState();
     } catch (error) {
       logger.error("Agent loop failed", error);
       session.status = "failed";
       session.logs.push(`Error: ${this.getErrorMessage(error)}`);
+      session.finalReport = buildFallbackAgentReport(
+        session.goal,
+        this.getActiveTab()?.url ?? null,
+        session.steps,
+      );
+      session.summary = buildProgressSummary(
+        session.goal,
+        session.steps,
+        this.getActiveTab()?.url ?? null,
+      );
       this.state.isRunning = false;
       this.emitState();
       throw error;
@@ -346,7 +400,7 @@ export class ComputerUseManager {
   }
 
   async generateScript(
-    request: ScriptGenerationRequest
+    request: ScriptGenerationRequest,
   ): Promise<ComputerUseState> {
     const activeSession = this.getActiveSession();
 
@@ -359,7 +413,9 @@ export class ComputerUseManager {
       return this.state;
     }
 
-    session.logs.push("Generating a browser-side snippet for the current site.");
+    session.logs.push(
+      "Generating a browser-side snippet for the current site.",
+    );
     logger.info("Browser-side snippet generation started");
     this.emitState();
 
@@ -373,7 +429,9 @@ export class ComputerUseManager {
       session.logs.push("Snippet ready.");
     } catch (error) {
       logger.error("Snippet generation failed", error);
-      session.logs.push(`Snippet generation failed: ${this.getErrorMessage(error)}`);
+      session.logs.push(
+        `Snippet generation failed: ${this.getErrorMessage(error)}`,
+      );
     }
 
     this.emitState();
@@ -387,7 +445,7 @@ export class ComputerUseManager {
 
     return (
       this.state.sessions.find(
-        (session) => session.id === this.state.activeSessionId
+        (session) => session.id === this.state.activeSessionId,
       ) ?? null
     );
   }
@@ -452,7 +510,7 @@ export class ComputerUseManager {
     });
 
     const parsed = this.parseJson<{ summary?: string; steps?: PlannedStep[] }>(
-      result.text
+      result.text,
     );
 
     if (!parsed.steps?.length) {
@@ -467,7 +525,7 @@ export class ComputerUseManager {
 
   private async buildScript(goal: string): Promise<string> {
     const snapshot = await this.getPageSnapshot();
-    
+
     let model: LanguageModel;
     try {
       model = this.initializeModel();
@@ -498,7 +556,55 @@ runBlueberryTask();`;
     return result.text.trim();
   }
 
-  private buildFallbackPlan(goal: string, url: string | null): {
+  private async buildAgentReport(session: ComputerUseSession): Promise<string> {
+    const snapshot = await this.getPageSnapshot();
+    const fallback = buildFallbackAgentReport(
+      session.goal,
+      snapshot.url,
+      session.steps,
+    );
+
+    let model: LanguageModel;
+    try {
+      model = this.initializeModel();
+    } catch {
+      return fallback;
+    }
+
+    const recentSteps = session.steps.slice(-8).map((step) => ({
+      label: step.label,
+      status: step.status,
+      result: step.result?.slice(0, 500) ?? null,
+    }));
+    const recentLogs = session.logs.slice(-10);
+
+    try {
+      const result = await generateText({
+        model,
+        system: AGENT_REPORT_PROMPT,
+        prompt: [
+          `User goal: ${session.goal}`,
+          `Current URL: ${snapshot.url ?? "unknown"}`,
+          `Current title: ${snapshot.title ?? "unknown"}`,
+          `Current page text preview:\n${snapshot.textPreview || "No page text available."}`,
+          `Recent completed steps:\n${JSON.stringify(recentSteps, null, 2)}`,
+          `Recent logs:\n${recentLogs.join("\n")}`,
+          `Fallback report:\n${fallback}`,
+        ].join("\n\n"),
+        temperature: 0.2,
+        maxRetries: 2,
+      });
+
+      return result.text.trim() || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private buildFallbackPlan(
+    goal: string,
+    url: string | null,
+  ): {
     summary: string;
     steps: PlannedStep[];
   } {
@@ -519,14 +625,15 @@ runBlueberryTask();`;
     });
 
     return {
-      summary: "Fallback run: collect page context and keep the operator informed.",
+      summary:
+        "Fallback run: collect page context and keep the operator informed.",
       steps,
     };
   }
 
   private buildHeuristicPlan(
     goal: string,
-    snapshot: { url: string | null; title: string | null; textPreview: string }
+    snapshot: { url: string | null; title: string | null; textPreview: string },
   ): { summary: string; steps: PlannedStep[] } | null {
     const normalizedGoal = goal.trim().toLowerCase();
     const currentUrl = snapshot.url ?? "";
@@ -539,7 +646,7 @@ runBlueberryTask();`;
 
     const looksLikeShoppingTask =
       /\b(shoe|shoes|sneaker|sneakers|boot|boots|shirt|bag|watch|jacket|running)\b/i.test(
-        normalizedGoal
+        normalizedGoal,
       );
 
     if (onGoogle && /\b(search|find)\b/i.test(normalizedGoal) && query) {
@@ -597,10 +704,13 @@ runBlueberryTask();`;
     if (
       looksLikeShoppingTask &&
       !onGoogle &&
-      /\b(first item|first product|open first|click first)\b/i.test(normalizedGoal)
+      /\b(first item|first product|open first|click first)\b/i.test(
+        normalizedGoal,
+      )
     ) {
       return {
-        summary: "Open the first likely product item on the current shopping page.",
+        summary:
+          "Open the first likely product item on the current shopping page.",
         steps: [
           {
             action: "run_script",
@@ -660,13 +770,13 @@ runBlueberryTask();`;
         }
         await this.runTabScript(
           tab,
-          this.buildTypeScript(step.selector, step.text ?? "")
+          this.buildTypeScript(step.selector, step.text ?? ""),
         );
         return `Typed into ${step.selector}`;
       case "press":
         await this.runTabScript(
           tab,
-          this.buildPressScript(step.text ?? "Enter", step.selector)
+          this.buildPressScript(step.text ?? "Enter", step.selector),
         );
         return `Pressed ${step.text ?? "Enter"}`;
       case "extract_text": {
@@ -684,7 +794,7 @@ runBlueberryTask();`;
           return this.stringifyExecutionResult(await tab.runJs(step.script));
         } catch (error) {
           throw new Error(
-            `Script failed to execute, this normally means an error was thrown. ${this.getErrorMessage(error)}`
+            `Script failed to execute, this normally means an error was thrown. ${this.getErrorMessage(error)}`,
           );
         }
       default:
@@ -733,6 +843,34 @@ runBlueberryTask();`;
 
   private async runTabScript(tab: Tab, code: string): Promise<unknown> {
     return tab.runJs(code);
+  }
+
+  private describeToolCall(toolName: string, input: unknown): string {
+    if (!input || typeof input !== "object") {
+      return toolName;
+    }
+
+    const data = input as Record<string, unknown>;
+    if (typeof data.query === "string") {
+      return `${toolName}: ${data.query}`;
+    }
+    if (typeof data.url === "string") {
+      return `${toolName}: ${data.url}`;
+    }
+    if (typeof data.intent === "string") {
+      return `${toolName}: ${data.intent}`;
+    }
+    if (typeof data.targetText === "string") {
+      return `${toolName}: ${data.targetText}`;
+    }
+    if (typeof data.reason === "string") {
+      return `${toolName}: ${data.reason}`;
+    }
+    if (typeof data.text === "string") {
+      return `${toolName}: ${String(data.text).slice(0, 40)}`;
+    }
+
+    return toolName;
   }
 
   private buildClickScript(selector: string): string {
