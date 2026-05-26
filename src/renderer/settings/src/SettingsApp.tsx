@@ -5,6 +5,7 @@ import { cn } from "@common/lib/utils";
 import {
   Bot,
   ChevronRight,
+  Download,
   Globe,
   LayoutPanelLeft,
   MemoryStick,
@@ -14,11 +15,18 @@ import {
   X,
 } from "lucide-react";
 
-type AppSettings = Awaited<ReturnType<typeof window.settingsAPI.getAppSettings>>;
+type AppSettings = Awaited<
+  ReturnType<typeof window.settingsAPI.getAppSettings>
+>;
 type OllamaModelsResult = Awaited<
   ReturnType<typeof window.settingsAPI.listOllamaModels>
 >;
-type MemoryEntry = Awaited<ReturnType<typeof window.settingsAPI.getMemories>>[number];
+type MemoryEntry = Awaited<
+  ReturnType<typeof window.settingsAPI.getMemories>
+>[number];
+type UpdateState = Awaited<
+  ReturnType<typeof window.settingsAPI.getUpdateState>
+>;
 type SettingsTab = "general" | "ai" | "workspace" | "memory";
 
 type TabConfig = {
@@ -65,6 +73,7 @@ export const SettingsApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   const [ollamaState, setOllamaState] = useState<{
     loading: boolean;
     error: string | null;
@@ -73,19 +82,23 @@ export const SettingsApp: React.FC = () => {
 
   useEffect(() => {
     const load = async () => {
-      const [next, savedMemories] = await Promise.all([
+      const [next, savedMemories, nextUpdateState] = await Promise.all([
         window.settingsAPI.getAppSettings(),
         window.settingsAPI.getMemories(),
+        window.settingsAPI.getUpdateState(),
       ]);
       setSettings(next);
       setMemories(savedMemories);
+      setUpdateState(nextUpdateState);
     };
 
     void load();
     window.settingsAPI.onAppSettingsUpdated((next) => setSettings(next));
+    window.settingsAPI.onUpdateStateChanged((next) => setUpdateState(next));
 
     return () => {
       window.settingsAPI.removeAppSettingsUpdatedListener();
+      window.settingsAPI.removeUpdateStateChangedListener();
     };
   }, []);
 
@@ -128,7 +141,9 @@ export const SettingsApp: React.FC = () => {
     }
 
     const timeoutId = window.setTimeout(() => {
-      void window.settingsAPI.updateAppSettings({ model: settings.model.trim() });
+      void window.settingsAPI.updateAppSettings({
+        model: settings.model.trim(),
+      });
     }, MODEL_INPUT_COMMIT_DELAY_MS);
 
     return () => {
@@ -146,6 +161,9 @@ export const SettingsApp: React.FC = () => {
 
   const activeTabConfig = tabs.find((tab) => tab.id === activeTab) ?? tabs[0];
   const ActiveTabIcon = activeTabConfig.icon;
+  const updateCheckedLabel = updateState?.checkedAt
+    ? new Date(updateState.checkedAt).toLocaleString()
+    : "Not checked yet";
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -154,7 +172,9 @@ export const SettingsApp: React.FC = () => {
           <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-muted-foreground">
             Blueberry Browser
           </p>
-          <h1 className="mt-1 text-2xl font-semibold text-foreground">Settings</h1>
+          <h1 className="mt-1 text-2xl font-semibold text-foreground">
+            Settings
+          </h1>
         </div>
         <Button
           variant="secondary"
@@ -168,10 +188,12 @@ export const SettingsApp: React.FC = () => {
       </header>
 
       <div className="app-region-no-drag flex min-h-0 flex-1 flex-col gap-5 p-5 lg:flex-row">
-        <aside className="w-full shrink-0 lg:w-[290px]">
+        <aside className="w-full shrink-0 lg:w-[320px]">
           <div className="rounded-[24px] border border-border bg-card p-3 shadow-sm">
             <div className="mb-3 px-3 pt-2">
-              <p className="text-sm font-semibold text-foreground">Preferences</p>
+              <p className="text-sm font-semibold text-foreground">
+                Preferences
+              </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 Organize Blueberry by area instead of one long page.
               </p>
@@ -190,7 +212,7 @@ export const SettingsApp: React.FC = () => {
                       "flex w-full items-center gap-3 rounded-[16px] border px-3 py-3 text-left transition-colors",
                       isActive
                         ? "border-border bg-secondary text-foreground"
-                        : "border-transparent bg-transparent text-foreground hover:border-border hover:bg-secondary/50"
+                        : "border-transparent bg-transparent text-foreground hover:border-border hover:bg-secondary/50",
                     )}
                   >
                     <div
@@ -198,7 +220,7 @@ export const SettingsApp: React.FC = () => {
                         "flex size-10 items-center justify-center rounded-2xl border",
                         isActive
                           ? "border-border bg-background"
-                          : "border-border/70 bg-background"
+                          : "border-border/70 bg-background",
                       )}
                     >
                       <Icon className="size-4" />
@@ -208,7 +230,9 @@ export const SettingsApp: React.FC = () => {
                       <div
                         className={cn(
                           "mt-0.5 text-xs leading-5",
-                          isActive ? "text-muted-foreground" : "text-muted-foreground"
+                          isActive
+                            ? "text-muted-foreground"
+                            : "text-muted-foreground",
                         )}
                       >
                         {tab.description}
@@ -217,7 +241,9 @@ export const SettingsApp: React.FC = () => {
                     <ChevronRight
                       className={cn(
                         "size-4 transition-transform",
-                        isActive ? "translate-x-0.5 text-foreground" : "text-muted-foreground"
+                        isActive
+                          ? "translate-x-0.5 text-foreground"
+                          : "text-muted-foreground",
                       )}
                     />
                   </button>
@@ -228,7 +254,7 @@ export const SettingsApp: React.FC = () => {
         </aside>
 
         <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-4xl space-y-4">
+          <div className="mx-auto max-w-5xl space-y-4">
             <section className="rounded-[24px] border border-border bg-card p-6 shadow-sm">
               <div className="flex items-start gap-4">
                 <div className="flex size-12 items-center justify-center rounded-2xl bg-secondary/80">
@@ -248,6 +274,97 @@ export const SettingsApp: React.FC = () => {
             {activeTab === "general" && (
               <>
                 <section className={cardClassName}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 flex size-10 items-center justify-center rounded-2xl bg-secondary">
+                        <Download className="size-4 text-foreground" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-foreground">
+                          Updates
+                        </h3>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          Check GitHub releases and open the latest published
+                          download page.
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        void window.settingsAPI
+                          .checkForUpdates()
+                          .then(setUpdateState)
+                      }
+                    >
+                      Check Now
+                    </Button>
+                  </div>
+
+                  <div className="mt-4 rounded-[22px] border border-border bg-background/70 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">
+                          {updateState?.hasUpdate
+                            ? `Version ${updateState.latestVersion} is available`
+                            : updateState?.error
+                              ? "Update status unavailable"
+                              : "You are on the latest known version"}
+                        </p>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          Current version:{" "}
+                          {updateState?.currentVersion ?? "Unknown"}
+                        </p>
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          Last checked: {updateCheckedLabel}
+                        </p>
+                      </div>
+                      {updateState?.hasUpdate && (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() =>
+                              void window.settingsAPI
+                                .dismissUpdate()
+                                .then(setUpdateState)
+                            }
+                          >
+                            Hide Prompt
+                          </Button>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() =>
+                              void window.settingsAPI.openReleasePage()
+                            }
+                          >
+                            Update Now
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    {updateState?.releaseName && (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        Latest release: {updateState.releaseName}
+                      </p>
+                    )}
+                    {updateState?.publishedAt && (
+                      <p className="text-xs text-muted-foreground">
+                        Published:{" "}
+                        {new Date(updateState.publishedAt).toLocaleDateString()}
+                      </p>
+                    )}
+                    {updateState?.error && (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        {updateState.error}
+                      </p>
+                    )}
+                  </div>
+                </section>
+
+                <section className={cardClassName}>
                   <div className="flex items-start gap-3">
                     <div className="mt-0.5 flex size-10 items-center justify-center rounded-2xl bg-secondary">
                       {isDarkMode ? (
@@ -257,9 +374,12 @@ export const SettingsApp: React.FC = () => {
                       )}
                     </div>
                     <div>
-                      <h3 className="text-sm font-semibold text-foreground">Appearance</h3>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        Appearance
+                      </h3>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Pick the theme used by the browser chrome and settings window.
+                        Pick the theme used by the browser chrome and settings
+                        window.
                       </p>
                     </div>
                   </div>
@@ -272,7 +392,7 @@ export const SettingsApp: React.FC = () => {
                         "rounded-[22px] border p-4 text-left transition-all",
                         !isDarkMode
                           ? "border-foreground bg-foreground text-background shadow-[0_10px_28px_rgba(15,23,42,0.18)] dark:bg-white dark:text-zinc-950"
-                          : "border-border bg-background/85 text-foreground hover:border-foreground/25"
+                          : "border-border bg-background/85 text-foreground hover:border-foreground/25",
                       )}
                     >
                       <div className="flex items-center gap-2 text-sm font-medium">
@@ -282,7 +402,9 @@ export const SettingsApp: React.FC = () => {
                       <p
                         className={cn(
                           "mt-2 text-xs leading-5",
-                          !isDarkMode ? "text-background/70 dark:text-zinc-700" : "text-muted-foreground"
+                          !isDarkMode
+                            ? "text-background/70 dark:text-zinc-700"
+                            : "text-muted-foreground",
                         )}
                       >
                         Bright surfaces and classic macOS-style contrast.
@@ -296,7 +418,7 @@ export const SettingsApp: React.FC = () => {
                         "rounded-[22px] border p-4 text-left transition-all",
                         isDarkMode
                           ? "border-foreground bg-foreground text-background shadow-[0_10px_28px_rgba(15,23,42,0.18)] dark:bg-white dark:text-zinc-950"
-                          : "border-border bg-background/85 text-foreground hover:border-foreground/25"
+                          : "border-border bg-background/85 text-foreground hover:border-foreground/25",
                       )}
                     >
                       <div className="flex items-center gap-2 text-sm font-medium">
@@ -306,7 +428,9 @@ export const SettingsApp: React.FC = () => {
                       <p
                         className={cn(
                           "mt-2 text-xs leading-5",
-                          isDarkMode ? "text-background/70 dark:text-zinc-700" : "text-muted-foreground"
+                          isDarkMode
+                            ? "text-background/70 dark:text-zinc-700"
+                            : "text-muted-foreground",
                         )}
                       >
                         Lower-glare interface for focused browsing and tool use.
@@ -321,9 +445,12 @@ export const SettingsApp: React.FC = () => {
                       <Globe className="size-4 text-foreground" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-semibold text-foreground">Startup</h3>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        Startup
+                      </h3>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Choose where a new tab starts when Blueberry opens a page.
+                        Choose where a new tab starts when Blueberry opens a
+                        page.
                       </p>
                     </div>
                   </div>
@@ -335,7 +462,10 @@ export const SettingsApp: React.FC = () => {
                     <input
                       value={settings.homepage}
                       onChange={(event) =>
-                        setSettings({ ...settings, homepage: event.target.value })
+                        setSettings({
+                          ...settings,
+                          homepage: event.target.value,
+                        })
                       }
                       onBlur={(event) =>
                         void updateSettings({ homepage: event.target.value })
@@ -351,9 +481,12 @@ export const SettingsApp: React.FC = () => {
                       <Search className="size-4 text-foreground" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-semibold text-foreground">Search</h3>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        Search
+                      </h3>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Set the search engine used when the address bar input is not a URL.
+                        Set the search engine used when the address bar input is
+                        not a URL.
                       </p>
                     </div>
                   </div>
@@ -366,7 +499,8 @@ export const SettingsApp: React.FC = () => {
                       value={settings.searchEngine}
                       onChange={(event) =>
                         void updateSettings({
-                          searchEngine: event.target.value as AppSettings["searchEngine"],
+                          searchEngine: event.target
+                            .value as AppSettings["searchEngine"],
                         })
                       }
                       className="w-full rounded-2xl border border-border bg-background/90 px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-foreground/30"
@@ -388,7 +522,9 @@ export const SettingsApp: React.FC = () => {
                       <Bot className="size-4 text-foreground" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-semibold text-foreground">Provider</h3>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        Provider
+                      </h3>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
                         Choose which model backend powers the AI workspace.
                       </p>
@@ -403,7 +539,8 @@ export const SettingsApp: React.FC = () => {
                       value={settings.provider}
                       onChange={(event) =>
                         void updateSettings({
-                          provider: event.target.value as AppSettings["provider"],
+                          provider: event.target
+                            .value as AppSettings["provider"],
                         })
                       }
                       className="w-full rounded-2xl border border-border bg-background/90 px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-foreground/30"
@@ -418,7 +555,9 @@ export const SettingsApp: React.FC = () => {
                 {settings.provider === "ollama" ? (
                   <>
                     <section className={cardClassName}>
-                      <h3 className="text-sm font-semibold text-foreground">Local server</h3>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        Local server
+                      </h3>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
                         Point Blueberry at your Ollama instance.
                       </p>
@@ -436,7 +575,9 @@ export const SettingsApp: React.FC = () => {
                             })
                           }
                           onBlur={(event) =>
-                            void updateSettings({ ollamaBaseUrl: event.target.value })
+                            void updateSettings({
+                              ollamaBaseUrl: event.target.value,
+                            })
                           }
                           className="w-full rounded-2xl border border-border bg-background/90 px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-foreground/30"
                           placeholder="http://127.0.0.1:11434"
@@ -445,7 +586,9 @@ export const SettingsApp: React.FC = () => {
                     </section>
 
                     <section className={cardClassName}>
-                      <h3 className="text-sm font-semibold text-foreground">Model</h3>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        Model
+                      </h3>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
                         Pick from installed local models exposed by Ollama.
                       </p>
@@ -482,7 +625,10 @@ export const SettingsApp: React.FC = () => {
                           </p>
                         )}
                         <p className="mt-2 text-xs text-muted-foreground">
-                          Run <code className="rounded bg-secondary px-1 py-0.5">ollama list</code>{" "}
+                          Run{" "}
+                          <code className="rounded bg-secondary px-1 py-0.5">
+                            ollama list
+                          </code>{" "}
                           to confirm the model is installed locally.
                         </p>
                       </div>
@@ -490,7 +636,9 @@ export const SettingsApp: React.FC = () => {
                   </>
                 ) : (
                   <section className={cardClassName}>
-                    <h3 className="text-sm font-semibold text-foreground">Remote model</h3>
+                    <h3 className="text-sm font-semibold text-foreground">
+                      Remote model
+                    </h3>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
                       Set the exact model name used for requests.
                     </p>
@@ -502,7 +650,10 @@ export const SettingsApp: React.FC = () => {
                       <input
                         value={settings.model}
                         onChange={(event) =>
-                          setSettings({ ...settings, model: event.target.value })
+                          setSettings({
+                            ...settings,
+                            model: event.target.value,
+                          })
                         }
                         className="w-full rounded-2xl border border-border bg-background/90 px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-foreground/30"
                         placeholder={
@@ -530,7 +681,9 @@ export const SettingsApp: React.FC = () => {
                       <LayoutPanelLeft className="size-4 text-foreground" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-semibold text-foreground">Sidebar</h3>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        Sidebar
+                      </h3>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
                         Control how much space the AI and tools panel uses.
                       </p>
@@ -564,9 +717,12 @@ export const SettingsApp: React.FC = () => {
                 </section>
 
                 <section className={cardClassName}>
-                  <h3 className="text-sm font-semibold text-foreground">Routing</h3>
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Routing
+                  </h3>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    Decide whether code-heavy tasks should move into the sandbox automatically.
+                    Decide whether code-heavy tasks should move into the sandbox
+                    automatically.
                   </p>
 
                   <label className="mt-4 flex items-start gap-3 rounded-[22px] border border-border bg-background/70 p-4 text-sm text-foreground">
@@ -581,7 +737,8 @@ export const SettingsApp: React.FC = () => {
                       className="mt-0.5"
                     />
                     <span>
-                      Automatically switch to sandbox for code, file, and data tasks
+                      Automatically switch to sandbox for code, file, and data
+                      tasks
                     </span>
                   </label>
                 </section>
@@ -596,9 +753,12 @@ export const SettingsApp: React.FC = () => {
                       <MemoryStick className="size-4 text-foreground" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-semibold text-foreground">Memory</h3>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        Memory
+                      </h3>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        BlueBerry stores distilled preferences and instructions here, not full chat logs.
+                        BlueBerry stores distilled preferences and instructions
+                        here, not full chat logs.
                       </p>
                     </div>
                   </div>
@@ -608,27 +768,37 @@ export const SettingsApp: React.FC = () => {
                       type="checkbox"
                       checked={settings.memoryEnabled}
                       onChange={(event) =>
-                        void updateSettings({ memoryEnabled: event.target.checked })
+                        void updateSettings({
+                          memoryEnabled: event.target.checked,
+                        })
                       }
                       className="mt-0.5"
                     />
-                    <span>Enable persistent memory for future conversations and tasks</span>
+                    <span>
+                      Enable persistent memory for future conversations and
+                      tasks
+                    </span>
                   </label>
                 </section>
 
                 <section className={cardClassName}>
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-sm font-semibold text-foreground">Saved memories</h3>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        Saved memories
+                      </h3>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Review what the browser remembers. You can delete items or clear everything.
+                        Review what the browser remembers. You can delete items
+                        or clear everything.
                       </p>
                     </div>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() =>
-                        void window.settingsAPI.clearMemories().then(setMemories)
+                        void window.settingsAPI
+                          .clearMemories()
+                          .then(setMemories)
                       }
                       disabled={memories.length === 0}
                     >
@@ -644,7 +814,9 @@ export const SettingsApp: React.FC = () => {
                           className="flex items-start justify-between gap-3 rounded-[20px] border border-border bg-background/80 p-4"
                         >
                           <div className="min-w-0">
-                            <p className="text-sm text-foreground">{memory.content}</p>
+                            <p className="text-sm text-foreground">
+                              {memory.content}
+                            </p>
                             <p className="mt-1 text-xs uppercase tracking-[0.14em] text-muted-foreground">
                               {memory.category}
                             </p>
@@ -653,7 +825,9 @@ export const SettingsApp: React.FC = () => {
                             variant="ghost"
                             size="sm"
                             onClick={() =>
-                              void window.settingsAPI.deleteMemory(memory.id).then(setMemories)
+                              void window.settingsAPI
+                                .deleteMemory(memory.id)
+                                .then(setMemories)
                             }
                           >
                             Delete

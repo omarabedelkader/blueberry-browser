@@ -20,10 +20,23 @@ interface AppSettings {
   memoryEnabled: boolean;
 }
 
+interface UpdateState {
+  checking: boolean;
+  hasUpdate: boolean;
+  dismissed: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseUrl: string | null;
+  releaseName: string | null;
+  publishedAt: string | null;
+  checkedAt: number | null;
+  error: string | null;
+}
+
 interface TopBarAPI {
   // Tab management
   createTab: (
-    url?: string
+    url?: string,
   ) => Promise<{ id: string; title: string; url: string } | null>;
   closeTab: (tabId: string) => Promise<boolean>;
   switchTab: (tabId: string) => Promise<boolean>;
@@ -43,8 +56,11 @@ interface TopBarAPI {
   toggleSidebar: () => Promise<void>;
   openBrowserSettings: () => Promise<void>;
   getAppSettings: () => Promise<AppSettings>;
+  getUpdateState: () => Promise<UpdateState>;
   onAppSettingsUpdated: (callback: (settings: AppSettings) => void) => void;
   removeAppSettingsUpdatedListener: () => void;
+  onUpdateStateChanged: (callback: (state: UpdateState) => void) => void;
+  removeUpdateStateChangedListener: () => void;
 }
 
 declare global {

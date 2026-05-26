@@ -3,6 +3,7 @@ import type { Window } from "./Window";
 import { AISettingsStore } from "./AISettings";
 import { logger } from "./Logger";
 import { MemoryStore } from "./MemoryStore";
+import { UpdateManager } from "./UpdateManager";
 
 const SENSITIVE_CHANNELS = new Set([
   "sidebar-chat-message",
@@ -52,6 +53,10 @@ export class EventManager {
     "ollama-models-list",
     "app-settings-get",
     "app-settings-update",
+    "update-state-get",
+    "update-check",
+    "update-dismiss",
+    "update-open-release-page",
     "get-page-content",
     "get-page-text",
     "get-current-url",
@@ -62,13 +67,19 @@ export class EventManager {
   private readonly getMainWindow: () => Window | null;
   private settingsStore: AISettingsStore;
   private memoryStore: MemoryStore;
+  private updateManager: UpdateManager;
+  private removeUpdateListener: (() => void) | null = null;
 
   constructor(getMainWindow: () => Window | null) {
     this.getMainWindow = getMainWindow;
     this.settingsStore = AISettingsStore.getInstance();
     this.memoryStore = MemoryStore.getInstance();
+    this.updateManager = UpdateManager.getInstance();
     this.removeRegisteredHandlers();
     this.setupEventHandlers();
+    this.removeUpdateListener = this.updateManager.onStateChange(() =>
+      this.broadcastUpdateState(),
+    );
   }
 
   private getAvailableMainWindow(): Window | null {
@@ -105,6 +116,9 @@ export class EventManager {
     // AI settings
     this.handleAISettingsEvents();
 
+    // Update events
+    this.handleUpdateEvents();
+
     // Memory events
     this.handleMemoryEvents();
 
@@ -132,6 +146,31 @@ export class EventManager {
     ipcMain.handle("memory-clear", () => {
       logger.info("Memory cleared");
       return this.memoryStore.clear();
+    });
+  }
+
+  private handleUpdateEvents(): void {
+    ipcMain.handle("update-state-get", () => {
+      this.logChannel("update-state-get");
+      return this.updateManager.getState();
+    });
+
+    ipcMain.handle("update-check", async () => {
+      this.logChannel("update-check");
+      return this.updateManager.checkForUpdates({
+        mainWindow: this.getAvailableMainWindow(),
+        promptUser: false,
+      });
+    });
+
+    ipcMain.handle("update-dismiss", () => {
+      this.logChannel("update-dismiss");
+      return this.updateManager.dismissUpdate();
+    });
+
+    ipcMain.handle("update-open-release-page", async () => {
+      this.logChannel("update-open-release-page");
+      await this.updateManager.openReleasePage();
     });
   }
 
@@ -352,7 +391,9 @@ export class EventManager {
 
     ipcMain.handle("computer-use-generate-script", async (_, request) => {
       logger.info("Computer use script generation started");
-      return this.requireMainWindow().sidebar.computerUse.generateScript(request);
+      return this.requireMainWindow().sidebar.computerUse.generateScript(
+        request,
+      );
     });
 
     ipcMain.handle("sandbox-get-state", () => {
@@ -409,12 +450,13 @@ export class EventManager {
     ipcMain.handle("ai-settings-update", (_, settings) => {
       logger.info("AI settings updated", {
         provider: settings?.provider,
-        hasModel: typeof settings?.model === "string" && settings.model.length > 0,
+        hasModel:
+          typeof settings?.model === "string" && settings.model.length > 0,
       });
       const updated = this.settingsStore.updateSettings(settings);
       this.requireMainWindow().sidebar.view.webContents.send(
         "ai-settings-updated",
-        updated
+        updated,
       );
       return updated;
     });
@@ -427,7 +469,8 @@ export class EventManager {
     ipcMain.handle("app-settings-update", (_, settings) => {
       logger.info("App settings updated", {
         provider: settings?.provider,
-        hasModel: typeof settings?.model === "string" && settings.model.length > 0,
+        hasModel:
+          typeof settings?.model === "string" && settings.model.length > 0,
         searchEngine: settings?.searchEngine,
       });
       const updated = this.settingsStore.updateSettings(settings);
@@ -441,7 +484,9 @@ export class EventManager {
     ipcMain.handle("ollama-models-list", async () => {
       this.logChannel("ollama-models-list");
       const settings = this.settingsStore.getSettings();
-      const baseUrl = (settings.ollamaBaseUrl || "http://127.0.0.1:11434").trim();
+      const baseUrl = (
+        settings.ollamaBaseUrl || "http://127.0.0.1:11434"
+      ).trim();
 
       const normalizedBaseUrl = baseUrl
         .replace(/\/(?:v1|api)\/?$/, "")
@@ -536,18 +581,12 @@ export class EventManager {
 
     // Send to topbar
     if (mainWindow.topBar.view.webContents !== sender) {
-      mainWindow.topBar.view.webContents.send(
-        "dark-mode-updated",
-        isDarkMode
-      );
+      mainWindow.topBar.view.webContents.send("dark-mode-updated", isDarkMode);
     }
 
     // Send to sidebar
     if (mainWindow.sidebar.view.webContents !== sender) {
-      mainWindow.sidebar.view.webContents.send(
-        "dark-mode-updated",
-        isDarkMode
-      );
+      mainWindow.sidebar.view.webContents.send("dark-mode-updated", isDarkMode);
     }
 
     // Send to standalone settings window if it exists
@@ -565,11 +604,24 @@ export class EventManager {
   public cleanup(): void {
     ipcMain.removeAllListeners("dark-mode-changed");
     ipcMain.removeAllListeners("ping");
+    this.removeUpdateListener?.();
+    this.removeUpdateListener = null;
   }
 
   private removeRegisteredHandlers(): void {
     for (const channel of EventManager.HANDLE_CHANNELS) {
       ipcMain.removeHandler(channel);
     }
+  }
+
+  private broadcastUpdateState(): void {
+    const mainWindow = this.getAvailableMainWindow();
+    if (!mainWindow) {
+      return;
+    }
+
+    const state = this.updateManager.getState();
+    mainWindow.topBar.view.webContents.send("update-state-changed", state);
+    mainWindow.browserSettings.send("update-state-changed", state);
   }
 }

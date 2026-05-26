@@ -4,10 +4,12 @@ import { Window } from "./Window";
 import { AppMenu } from "./Menu";
 import { EventManager } from "./EventManager";
 import { logger } from "./Logger";
+import { UpdateManager } from "./UpdateManager";
 
 let mainWindow: Window | null = null;
 let eventManager: EventManager | null = null;
 let menu: AppMenu | null = null;
+const updateManager = UpdateManager.getInstance();
 
 const createWindow = (): Window => {
   const window = new Window();
@@ -34,6 +36,7 @@ app.whenReady().then(() => {
   eventManager = new EventManager(() => mainWindow);
 
   mainWindow = createWindow();
+  void updateManager.checkForUpdates({ mainWindow, promptUser: true });
 
   app.on("activate", () => {
     // On macOS it's common to re-create a window in the app when the
@@ -41,6 +44,7 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) {
       logger.info("App activated with no open windows");
       mainWindow = createWindow();
+      void updateManager.checkForUpdates({ mainWindow, promptUser: true });
     }
   });
 });

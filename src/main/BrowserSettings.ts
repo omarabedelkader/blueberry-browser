@@ -12,13 +12,13 @@ export class BrowserSettings {
 
   private createWindow(): BrowserWindow {
     const bounds = this.parentWindow.getBounds();
-    const width = 920;
+    const width = 1040;
     const height = 720;
 
     const settingsWindow = new BrowserWindow({
       width,
       height,
-      minWidth: 820,
+      minWidth: 960,
       minHeight: 620,
       show: false,
       autoHideMenuBar: true,
@@ -39,11 +39,13 @@ export class BrowserSettings {
     if (is.dev && process.env["ELECTRON_RENDERER_URL"]) {
       const settingsUrl = new URL(
         "/settings/",
-        process.env["ELECTRON_RENDERER_URL"]
+        process.env["ELECTRON_RENDERER_URL"],
       );
       void settingsWindow.loadURL(settingsUrl.toString());
     } else {
-      void settingsWindow.loadFile(join(__dirname, "../renderer/settings.html"));
+      void settingsWindow.loadFile(
+        join(__dirname, "../renderer/settings.html"),
+      );
     }
 
     settingsWindow.on("closed", () => {
@@ -94,6 +96,10 @@ export class BrowserSettings {
   }
 
   getIsVisible(): boolean {
-    return !!this.settingsWindow && !this.settingsWindow.isDestroyed() && this.settingsWindow.isVisible();
+    return (
+      !!this.settingsWindow &&
+      !this.settingsWindow.isDestroyed() &&
+      this.settingsWindow.isVisible()
+    );
   }
 }

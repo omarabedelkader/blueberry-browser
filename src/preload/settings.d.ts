@@ -19,17 +19,40 @@ interface MemoryEntry {
   updatedAt: number;
 }
 
+interface UpdateState {
+  checking: boolean;
+  hasUpdate: boolean;
+  dismissed: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseUrl: string | null;
+  releaseName: string | null;
+  publishedAt: string | null;
+  checkedAt: number | null;
+  error: string | null;
+}
+
 interface SettingsAPI {
   getAppSettings: () => Promise<AppSettings>;
   updateAppSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
   setSidebarWidth: (width: number) => Promise<number>;
   closeBrowserSettings: () => Promise<void>;
-  listOllamaModels: () => Promise<{ ok: boolean; models: string[]; error: string | null }>;
+  listOllamaModels: () => Promise<{
+    ok: boolean;
+    models: string[];
+    error: string | null;
+  }>;
   getMemories: () => Promise<MemoryEntry[]>;
   deleteMemory: (id: string) => Promise<MemoryEntry[]>;
   clearMemories: () => Promise<MemoryEntry[]>;
+  getUpdateState: () => Promise<UpdateState>;
+  checkForUpdates: () => Promise<UpdateState>;
+  dismissUpdate: () => Promise<UpdateState>;
+  openReleasePage: () => Promise<void>;
   onAppSettingsUpdated: (callback: (settings: AppSettings) => void) => void;
   removeAppSettingsUpdatedListener: () => void;
+  onUpdateStateChanged: (callback: (state: UpdateState) => void) => void;
+  removeUpdateStateChangedListener: () => void;
 }
 
 declare global {

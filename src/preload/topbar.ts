@@ -29,18 +29,26 @@ const topBarAPI = {
     electronAPI.ipcRenderer.invoke("tab-run-js", tabId, code),
 
   // Sidebar
-  toggleSidebar: () =>
-    electronAPI.ipcRenderer.invoke("toggle-sidebar"),
+  toggleSidebar: () => electronAPI.ipcRenderer.invoke("toggle-sidebar"),
   openBrowserSettings: () =>
     electronAPI.ipcRenderer.invoke("open-browser-settings"),
   getAppSettings: () => electronAPI.ipcRenderer.invoke("app-settings-get"),
+  getUpdateState: () => electronAPI.ipcRenderer.invoke("update-state-get"),
   onAppSettingsUpdated: (callback: (settings: unknown) => void) => {
     electronAPI.ipcRenderer.on("app-settings-updated", (_, settings) =>
-      callback(settings)
+      callback(settings),
     );
   },
   removeAppSettingsUpdatedListener: () => {
     electronAPI.ipcRenderer.removeAllListeners("app-settings-updated");
+  },
+  onUpdateStateChanged: (callback: (state: unknown) => void) => {
+    electronAPI.ipcRenderer.on("update-state-changed", (_, state) =>
+      callback(state),
+    );
+  },
+  removeUpdateStateChangedListener: () => {
+    electronAPI.ipcRenderer.removeAllListeners("update-state-changed");
   },
 };
 
