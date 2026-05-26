@@ -1,6 +1,7 @@
 import { app, dialog, shell } from "electron";
 import { logger } from "./Logger";
 import type { Window } from "./Window";
+import { buildUpdateSnapshot, type ReleaseMetadata } from "./updateState";
 
 const GITHUB_REMOTE_URL =
   "https://github.com/omarabedelkader/blueberry-browser.git";
@@ -19,13 +20,6 @@ export interface UpdateState {
   checkedAt: number | null;
   error: string | null;
 }
-
-type GitHubRelease = {
-  html_url?: string;
-  name?: string;
-  published_at?: string;
-  tag_name?: string;
-};
 
 type UpdateStateListener = (state: UpdateState) => void;
 
@@ -112,25 +106,27 @@ export class UpdateManager {
         throw new Error(`GitHub update check failed with ${response.status}`);
       }
 
-      const release = (await response.json()) as GitHubRelease;
-      const latestVersion = this.normalizeVersion(release.tag_name);
-      const hasUpdate =
-        latestVersion !== null &&
-        this.compareVersions(latestVersion, this.state.currentVersion) > 0;
+      const release = (await response.json()) as {
+        html_url?: string;
+        name?: string;
+        published_at?: string;
+        tag_name?: string;
+      };
 
-      this.setState({
-        checking: false,
-        hasUpdate,
-        dismissed: hasUpdate ? this.state.dismissed : false,
-        latestVersion,
-        releaseUrl: release.html_url || RELEASES_URL,
-        releaseName: release.name || release.tag_name || null,
-        publishedAt: release.published_at || null,
-        checkedAt: Date.now(),
-        error: null,
-      });
+      const snapshot = buildUpdateSnapshot(
+        this.state,
+        {
+          htmlUrl: release.html_url,
+          name: release.name,
+          publishedAt: release.published_at,
+          tagName: release.tag_name,
+        } satisfies ReleaseMetadata,
+        RELEASES_URL,
+        Date.now(),
+      );
+      this.setState(snapshot);
 
-      if (hasUpdate && options?.promptUser) {
+      if (snapshot.hasUpdate && options?.promptUser) {
         await this.maybePromptForUpdate(options.mainWindow ?? null);
       }
     } catch (error) {
@@ -215,42 +211,5 @@ export class UpdateManager {
     }
 
     return match[1];
-  }
-
-  private normalizeVersion(version: string | undefined): string | null {
-    if (!version) {
-      return null;
-    }
-
-    return version.trim().replace(/^v/i, "");
-  }
-
-  private compareVersions(a: string, b: string): number {
-    const aParts = this.parseVersion(a);
-    const bParts = this.parseVersion(b);
-    const length = Math.max(aParts.length, bParts.length);
-
-    for (let index = 0; index < length; index += 1) {
-      const aPart = aParts[index] ?? 0;
-      const bPart = bParts[index] ?? 0;
-
-      if (aPart > bPart) {
-        return 1;
-      }
-
-      if (aPart < bPart) {
-        return -1;
-      }
-    }
-
-    return 0;
-  }
-
-  private parseVersion(version: string): number[] {
-    return version
-      .split("-")[0]
-      .split(".")
-      .map((part) => Number.parseInt(part, 10))
-      .filter((part) => Number.isFinite(part));
   }
 }

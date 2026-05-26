@@ -9,6 +9,7 @@ import type { Window } from "./Window";
 import { AISettingsStore, type SearchEngine } from "./AISettings";
 import { logger } from "./Logger";
 import { MemoryStore, type MemoryEntry } from "./MemoryStore";
+import { compactConversationWindow } from "./llmHistory";
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -54,6 +55,7 @@ export class LLMClient {
   private readonly settingsStore: AISettingsStore;
   private readonly memoryStore: MemoryStore;
   private messages: CoreMessage[] = [];
+  private archivedConversationSummary: string | null = null;
 
   constructor(webContents: WebContents) {
     this.webContents = webContents;
@@ -74,13 +76,13 @@ export class LLMClient {
 
     if (initialized) {
       logger.info(
-        `✅ LLM Client initialized with ${provider} provider using model: ${model}`
+        `✅ LLM Client initialized with ${provider} provider using model: ${model}`,
       );
     } else {
       logger.error(
         initialized
           ? `❌ LLM Client initialization failed for ${provider}:${model}.`
-          : `❌ LLM Client initialization failed. Check your selected provider settings and API keys.`
+          : `❌ LLM Client initialization failed. Check your selected provider settings and API keys.`,
       );
     }
   }
@@ -109,7 +111,7 @@ export class LLMClient {
 
       // Build user message content with screenshot first, then text
       const userContent: any[] = [];
-      
+
       // Add screenshot as the first part if available
       if (screenshot) {
         userContent.push({
@@ -117,7 +119,7 @@ export class LLMClient {
           image: screenshot,
         });
       }
-      
+
       // Add text content
       userContent.push({
         type: "text",
@@ -129,8 +131,9 @@ export class LLMClient {
         role: "user",
         content: userContent.length === 1 ? request.message : userContent,
       };
-      
+
       this.messages.push(userMessage);
+      this.compactMessages();
       this.captureMemoriesFromUserMessage(request.message);
 
       // Send updated messages to renderer
@@ -149,7 +152,7 @@ export class LLMClient {
       if (!model) {
         this.sendErrorMessage(
           request.messageId,
-          "LLM service is not configured. Pick a model in AI panel settings and make sure the provider is reachable."
+          "LLM service is not configured. Pick a model in AI panel settings and make sure the provider is reachable.",
         );
         return;
       }
@@ -164,6 +167,7 @@ export class LLMClient {
 
   clearMessages(): void {
     this.messages = [];
+    this.archivedConversationSummary = null;
     this.sendMessagesToRenderer();
   }
 
@@ -177,7 +181,9 @@ export class LLMClient {
       return false;
     }
 
-    return BROWSER_ACTION_PATTERN.test(trimmed) && !NON_ACTION_PATTERN.test(trimmed);
+    return (
+      BROWSER_ACTION_PATTERN.test(trimmed) && !NON_ACTION_PATTERN.test(trimmed)
+    );
   }
 
   private shouldUseAgentMode(message: string): boolean {
@@ -186,7 +192,9 @@ export class LLMClient {
       return false;
     }
 
-    return SHOPPING_PATTERN.test(trimmed) || AUTONOMOUS_BROWSER_PATTERN.test(trimmed);
+    return (
+      SHOPPING_PATTERN.test(trimmed) || AUTONOMOUS_BROWSER_PATTERN.test(trimmed)
+    );
   }
 
   private parseLocalCommand(message: string): ParsedLocalCommand | null {
@@ -212,7 +220,7 @@ export class LLMClient {
 
   private handleLocalCommand(
     command: ParsedLocalCommand,
-    request: ChatRequest
+    request: ChatRequest,
   ): void {
     if (command.type === "help") {
       const response = [
@@ -245,7 +253,7 @@ export class LLMClient {
 
       const memory = this.memoryStore.upsertMemory(
         command.content,
-        "instruction"
+        "instruction",
       );
       const response = `Saved to memory: ${memory.content}`;
       this.appendAssistantMessage(response);
@@ -257,7 +265,7 @@ export class LLMClient {
   }
 
   private async handleDirectSearchRequest(
-    request: ChatRequest
+    request: ChatRequest,
   ): Promise<boolean> {
     const query = this.extractDirectSearchQuery(request.message);
     if (!query) {
@@ -267,7 +275,7 @@ export class LLMClient {
     if (!this.window?.activeTab) {
       this.sendErrorMessage(
         request.messageId,
-        "Search is unavailable because there is no active tab."
+        "Search is unavailable because there is no active tab.",
       );
       return true;
     }
@@ -276,7 +284,9 @@ export class LLMClient {
     const searchUrl = this.buildSearchUrl(query, searchEngine);
     const providerLabel = this.getSearchEngineLabel(searchEngine);
 
-    this.sendThought(`Thinking about the request.\nI should search ${providerLabel} for "${query}".\n`);
+    this.sendThought(
+      `Thinking about the request.\nI should search ${providerLabel} for "${query}".\n`,
+    );
 
     try {
       await this.window.activeTab.loadURL(searchUrl);
@@ -284,17 +294,21 @@ export class LLMClient {
       this.sendErrorMessage(
         request.messageId,
         `I tried to search for "${query}", but opening the results page failed: ${this.getErrorMessage(
-          error
-        )}`
+          error,
+        )}`,
       );
       return true;
     }
 
-    this.sendThought(`Opened ${providerLabel} results.\nNow I am scanning the page for the first likely website result.\n`);
+    this.sendThought(
+      `Opened ${providerLabel} results.\nNow I am scanning the page for the first likely website result.\n`,
+    );
     const firstResult = await this.findFirstSearchResult();
     if (firstResult) {
       try {
-        this.sendThought(`I found a promising result: "${firstResult.title}".\nOpening that website now.\n`);
+        this.sendThought(
+          `I found a promising result: "${firstResult.title}".\nOpening that website now.\n`,
+        );
         await this.window.activeTab.loadURL(firstResult.href);
         const response = `I searched ${providerLabel} for "${query}", scanned the results, and opened "${firstResult.title}".`;
         this.appendAssistantMessage(response);
@@ -336,7 +350,11 @@ export class LLMClient {
         continue;
       }
 
-      if (/\b(on|at|in)\s+(this\s+(site|page)|here|amazon|google|bing|duckduckgo|youtube|wikipedia)\b/i.test(query)) {
+      if (
+        /\b(on|at|in)\s+(this\s+(site|page)|here|amazon|google|bing|duckduckgo|youtube|wikipedia)\b/i.test(
+          query,
+        )
+      ) {
         return null;
       }
 
@@ -454,12 +472,12 @@ export class LLMClient {
   }
 
   private async handleBrowserAutomationRequest(
-    request: ChatRequest
+    request: ChatRequest,
   ): Promise<void> {
     if (!this.window) {
       this.sendErrorMessage(
         request.messageId,
-        "Browser automation is unavailable because the main window is not ready."
+        "Browser automation is unavailable because the main window is not ready.",
       );
       return;
     }
@@ -469,7 +487,7 @@ export class LLMClient {
     this.sendThought(
       useAgent
         ? "Thinking through the task.\nThis looks like an end-to-end browsing task, so I am switching into autonomous agent mode.\n"
-        : "Thinking through the task.\nI am planning browser actions and will narrate the steps as I go.\n"
+        : "Thinking through the task.\nI am planning browser actions and will narrate the steps as I go.\n",
     );
 
     const state = useAgent
@@ -488,7 +506,7 @@ export class LLMClient {
     if (!session) {
       this.sendErrorMessage(
         request.messageId,
-        "I couldn't start the browser task."
+        "I couldn't start the browser task.",
       );
       return;
     }
@@ -534,6 +552,7 @@ export class LLMClient {
       role: "assistant",
       content,
     });
+    this.compactMessages();
     this.sendMessagesToRenderer();
   }
 
@@ -541,11 +560,13 @@ export class LLMClient {
     this.webContents.send("chat-messages-updated", this.messages);
   }
 
-  private async prepareMessagesWithContext(_request: ChatRequest): Promise<CoreMessage[]> {
+  private async prepareMessagesWithContext(
+    _request: ChatRequest,
+  ): Promise<CoreMessage[]> {
     // Get page context from active tab
     let pageUrl: string | null = null;
     let pageText: string | null = null;
-    
+
     if (this.window) {
       const activeTab = this.window.activeTab;
       if (activeTab) {
@@ -568,7 +589,10 @@ export class LLMClient {
     return [systemMessage, ...this.messages];
   }
 
-  private buildSystemPrompt(url: string | null, pageText: string | null): string {
+  private buildSystemPrompt(
+    url: string | null,
+    pageText: string | null,
+  ): string {
     const parts: string[] = [
       "You are a helpful AI assistant integrated into a web browser.",
       "You can analyze and discuss web pages with the user.",
@@ -586,15 +610,23 @@ export class LLMClient {
 
     const settings = this.settingsStore.getSettings();
     if (settings.memoryEnabled) {
-      const memorySummary = this.buildMemorySummary(this.memoryStore.getMemories());
+      const memorySummary = this.buildMemorySummary(
+        this.memoryStore.getMemories(),
+      );
       if (memorySummary) {
         parts.push(`\nRemembered user context:\n${memorySummary}`);
       }
     }
 
+    if (this.archivedConversationSummary) {
+      parts.push(
+        `\nArchived conversation summary:\n${this.archivedConversationSummary}`,
+      );
+    }
+
     parts.push(
       "\nPlease provide helpful, accurate, and contextual responses about the current webpage.",
-      "If the user asks about specific content, refer to the page content and/or screenshot provided."
+      "If the user asks about specific content, refer to the page content and/or screenshot provided.",
     );
 
     return parts.join("\n");
@@ -624,9 +656,12 @@ export class LLMClient {
   }
 
   private extractMemories(
-    message: string
+    message: string,
   ): Array<{ content: string; category: MemoryEntry["category"] }> {
-    const memories: Array<{ content: string; category: MemoryEntry["category"] }> = [];
+    const memories: Array<{
+      content: string;
+      category: MemoryEntry["category"];
+    }> = [];
     const trimmed = message.trim();
     if (!trimmed) {
       return memories;
@@ -686,7 +721,7 @@ export class LLMClient {
   private async streamResponse(
     messages: CoreMessage[],
     messageId: string,
-    model: LanguageModel
+    model: LanguageModel,
   ): Promise<void> {
     try {
       const result = await streamText({
@@ -705,7 +740,7 @@ export class LLMClient {
 
   private async processStream(
     textStream: AsyncIterable<string>,
-    messageId: string
+    messageId: string,
   ): Promise<void> {
     let accumulatedText = "";
 
@@ -714,16 +749,21 @@ export class LLMClient {
       role: "assistant",
       content: "",
     };
-    
+
     // Keep track of the index for updates
     const messageIndex = this.messages.length;
     this.messages.push(assistantMessage);
+    this.compactMessages();
 
     for await (const chunk of textStream) {
       accumulatedText += chunk;
 
       // Update assistant message content
-      this.messages[messageIndex] = {
+      const currentMessageIndex = Math.min(
+        messageIndex,
+        this.messages.length - 1,
+      );
+      this.messages[currentMessageIndex] = {
         role: "assistant",
         content: accumulatedText,
       };
@@ -736,10 +776,15 @@ export class LLMClient {
     }
 
     // Final update with complete content
-    this.messages[messageIndex] = {
+    const currentMessageIndex = Math.min(
+      messageIndex,
+      this.messages.length - 1,
+    );
+    this.messages[currentMessageIndex] = {
       role: "assistant",
       content: accumulatedText,
     };
+    this.compactMessages();
     this.sendMessagesToRenderer();
 
     // Send the final complete signal
@@ -807,6 +852,15 @@ export class LLMClient {
       content,
       isComplete: false,
     });
+  }
+
+  private compactMessages(): void {
+    const compacted = compactConversationWindow(
+      this.messages,
+      this.archivedConversationSummary,
+    );
+    this.messages = compacted.messages;
+    this.archivedConversationSummary = compacted.archivedSummary;
   }
 
   private initializeModel(): LanguageModel | null {

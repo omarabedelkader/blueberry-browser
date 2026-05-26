@@ -1,5 +1,6 @@
 import { contextBridge } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
+import { subscribeToIpcChannel } from "./ipcSubscription";
 
 interface ChatRequest {
   message: string;
@@ -48,21 +49,19 @@ const sidebarAPI = {
   getMessages: () => electronAPI.ipcRenderer.invoke("sidebar-get-messages"),
 
   onChatResponse: (callback: (data: ChatResponse) => void) => {
-    electronAPI.ipcRenderer.on("chat-response", (_, data) => callback(data));
-  },
-
-  onMessagesUpdated: (callback: (messages: any[]) => void) => {
-    electronAPI.ipcRenderer.on("chat-messages-updated", (_, messages) =>
-      callback(messages)
+    return subscribeToIpcChannel(
+      electronAPI.ipcRenderer,
+      "chat-response",
+      callback,
     );
   },
 
-  removeChatResponseListener: () => {
-    electronAPI.ipcRenderer.removeAllListeners("chat-response");
-  },
-
-  removeMessagesUpdatedListener: () => {
-    electronAPI.ipcRenderer.removeAllListeners("chat-messages-updated");
+  onMessagesUpdated: (callback: (messages: any[]) => void) => {
+    return subscribeToIpcChannel(
+      electronAPI.ipcRenderer,
+      "chat-messages-updated",
+      callback,
+    );
   },
 
   // Page content access
@@ -83,18 +82,18 @@ const sidebarAPI = {
   updateAppSettings: (settings: Partial<AISettings>) =>
     electronAPI.ipcRenderer.invoke("app-settings-update", settings),
   onAISettingsUpdated: (callback: (settings: AISettings) => void) => {
-    electronAPI.ipcRenderer.on("ai-settings-updated", (_, settings) =>
-      callback(settings)
+    return subscribeToIpcChannel(
+      electronAPI.ipcRenderer,
+      "ai-settings-updated",
+      callback,
     );
   },
-  removeAISettingsUpdatedListener: () => {
-    electronAPI.ipcRenderer.removeAllListeners("ai-settings-updated");
-  },
   onOpenSettings: (callback: () => void) => {
-    electronAPI.ipcRenderer.on("sidebar-open-settings", () => callback());
-  },
-  removeOpenSettingsListener: () => {
-    electronAPI.ipcRenderer.removeAllListeners("sidebar-open-settings");
+    const listener = () => callback();
+    electronAPI.ipcRenderer.on("sidebar-open-settings", listener);
+    return () => {
+      electronAPI.ipcRenderer.removeListener("sidebar-open-settings", listener);
+    };
   },
 
   // Computer use
@@ -105,12 +104,11 @@ const sidebarAPI = {
   generateComputerUseScript: (request: ComputerUseRequest) =>
     electronAPI.ipcRenderer.invoke("computer-use-generate-script", request),
   onComputerUseState: (callback: (state: unknown) => void) => {
-    electronAPI.ipcRenderer.on("computer-use-state", (_, state) =>
-      callback(state)
+    return subscribeToIpcChannel(
+      electronAPI.ipcRenderer,
+      "computer-use-state",
+      callback,
     );
-  },
-  removeComputerUseStateListener: () => {
-    electronAPI.ipcRenderer.removeAllListeners("computer-use-state");
   },
 
   // Sandbox
@@ -119,7 +117,7 @@ const sidebarAPI = {
     electronAPI.ipcRenderer.invoke("sandbox-create-file", input),
   updateSandboxFile: (
     fileId: string,
-    patch: { name?: string; content?: string; isScoped?: boolean }
+    patch: { name?: string; content?: string; isScoped?: boolean },
   ) => electronAPI.ipcRenderer.invoke("sandbox-update-file", fileId, patch),
   deleteSandboxFile: (fileId: string) =>
     electronAPI.ipcRenderer.invoke("sandbox-delete-file", fileId),
@@ -130,10 +128,11 @@ const sidebarAPI = {
   runSandbox: (request?: { entryFileId?: string | null }) =>
     electronAPI.ipcRenderer.invoke("sandbox-run", request),
   onSandboxState: (callback: (state: unknown) => void) => {
-    electronAPI.ipcRenderer.on("sandbox-state", (_, state) => callback(state));
-  },
-  removeSandboxStateListener: () => {
-    electronAPI.ipcRenderer.removeAllListeners("sandbox-state");
+    return subscribeToIpcChannel(
+      electronAPI.ipcRenderer,
+      "sandbox-state",
+      callback,
+    );
   },
 };
 

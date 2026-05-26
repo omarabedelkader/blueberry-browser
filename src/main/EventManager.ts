@@ -4,6 +4,7 @@ import { AISettingsStore } from "./AISettings";
 import { logger } from "./Logger";
 import { MemoryStore } from "./MemoryStore";
 import { UpdateManager } from "./UpdateManager";
+import { ipcSchemas, parseIpcInput } from "./ipcSchemas";
 
 const SENSITIVE_CHANNELS = new Set([
   "sidebar-chat-message",
@@ -28,7 +29,6 @@ export class EventManager {
     "tab-go-forward",
     "tab-reload",
     "tab-screenshot",
-    "tab-run-js",
     "get-active-tab-info",
     "toggle-sidebar",
     "open-browser-settings",
@@ -178,20 +178,27 @@ export class EventManager {
     // Create new tab
     ipcMain.handle("create-tab", (_, url?: string) => {
       this.logChannel("create-tab");
-      const newTab = this.requireMainWindow().createTab(url);
+      const validatedUrl = parseIpcInput(
+        ipcSchemas.optionalNavigationTarget,
+        url,
+        "create-tab",
+      );
+      const newTab = this.requireMainWindow().createTab(validatedUrl);
       return { id: newTab.id, title: newTab.title, url: newTab.url };
     });
 
     // Close tab
     ipcMain.handle("close-tab", (_, id: string) => {
       this.logChannel("close-tab");
-      this.requireMainWindow().closeTab(id);
+      const validatedTabId = parseIpcInput(ipcSchemas.tabId, id, "close-tab");
+      this.requireMainWindow().closeTab(validatedTabId);
     });
 
     // Switch tab
     ipcMain.handle("switch-tab", (_, id: string) => {
       this.logChannel("switch-tab");
-      this.requireMainWindow().switchActiveTab(id);
+      const validatedTabId = parseIpcInput(ipcSchemas.tabId, id, "switch-tab");
+      this.requireMainWindow().switchActiveTab(validatedTabId);
     });
 
     // Get tabs
@@ -215,17 +222,27 @@ export class EventManager {
     // Navigation (for compatibility with existing code)
     ipcMain.handle("navigate-to", (_, url: string) => {
       this.logChannel("navigate-to");
+      const validatedUrl = parseIpcInput(
+        ipcSchemas.optionalNavigationTarget,
+        url,
+        "navigate-to",
+      );
       const mainWindow = this.requireMainWindow();
-      if (mainWindow.activeTab) {
-        mainWindow.activeTab.loadURL(url);
+      if (mainWindow.activeTab && validatedUrl) {
+        mainWindow.activeTab.loadURL(validatedUrl);
       }
     });
 
     ipcMain.handle("navigate-tab", async (_, tabId: string, url: string) => {
       this.logChannel("navigate-tab");
-      const tab = this.requireMainWindow().getTab(tabId);
+      const payload = parseIpcInput(
+        ipcSchemas.navigation,
+        { tabId, url },
+        "navigate-tab",
+      );
+      const tab = this.requireMainWindow().getTab(payload.tabId);
       if (tab) {
-        await tab.loadURL(url);
+        await tab.loadURL(payload.url);
         return true;
       }
       return false;
@@ -257,7 +274,12 @@ export class EventManager {
 
     // Tab-specific navigation handlers
     ipcMain.handle("tab-go-back", (_, tabId: string) => {
-      const tab = this.requireMainWindow().getTab(tabId);
+      const validatedTabId = parseIpcInput(
+        ipcSchemas.tabId,
+        tabId,
+        "tab-go-back",
+      );
+      const tab = this.requireMainWindow().getTab(validatedTabId);
       if (tab) {
         tab.goBack();
         return true;
@@ -266,7 +288,12 @@ export class EventManager {
     });
 
     ipcMain.handle("tab-go-forward", (_, tabId: string) => {
-      const tab = this.requireMainWindow().getTab(tabId);
+      const validatedTabId = parseIpcInput(
+        ipcSchemas.tabId,
+        tabId,
+        "tab-go-forward",
+      );
+      const tab = this.requireMainWindow().getTab(validatedTabId);
       if (tab) {
         tab.goForward();
         return true;
@@ -275,7 +302,12 @@ export class EventManager {
     });
 
     ipcMain.handle("tab-reload", (_, tabId: string) => {
-      const tab = this.requireMainWindow().getTab(tabId);
+      const validatedTabId = parseIpcInput(
+        ipcSchemas.tabId,
+        tabId,
+        "tab-reload",
+      );
+      const tab = this.requireMainWindow().getTab(validatedTabId);
       if (tab) {
         tab.reload();
         return true;
@@ -284,18 +316,15 @@ export class EventManager {
     });
 
     ipcMain.handle("tab-screenshot", async (_, tabId: string) => {
-      const tab = this.requireMainWindow().getTab(tabId);
+      const validatedTabId = parseIpcInput(
+        ipcSchemas.tabId,
+        tabId,
+        "tab-screenshot",
+      );
+      const tab = this.requireMainWindow().getTab(validatedTabId);
       if (tab) {
         const image = await tab.screenshot();
         return image.toDataURL();
-      }
-      return null;
-    });
-
-    ipcMain.handle("tab-run-js", async (_, tabId: string, code: string) => {
-      const tab = this.requireMainWindow().getTab(tabId);
-      if (tab) {
-        return await tab.runJs(code);
       }
       return null;
     });
@@ -349,13 +378,24 @@ export class EventManager {
 
     ipcMain.handle("sidebar-set-width", (_, width: number) => {
       this.logChannel("sidebar-set-width");
-      return this.requireMainWindow().setSidebarWidth(width);
+      const validatedWidth = parseIpcInput(
+        ipcSchemas.sidebarWidth,
+        width,
+        "sidebar-set-width",
+      );
+      return this.requireMainWindow().setSidebarWidth(validatedWidth);
     });
 
     // Chat message
     ipcMain.handle("sidebar-chat-message", async (_, request) => {
-      // The LLMClient now handles getting the screenshot and context directly
-      await this.requireMainWindow().sidebar.client.sendChatMessage(request);
+      const validatedRequest = parseIpcInput(
+        ipcSchemas.chatRequest,
+        request,
+        "sidebar-chat-message",
+      );
+      await this.requireMainWindow().sidebar.client.sendChatMessage(
+        validatedRequest,
+      );
     });
 
     // Clear chat
@@ -386,13 +426,25 @@ export class EventManager {
 
     ipcMain.handle("computer-use-start", async (_, request) => {
       logger.info("Computer use started");
-      return this.requireMainWindow().sidebar.computerUse.startSession(request);
+      const validatedRequest = parseIpcInput(
+        ipcSchemas.computerUseRequest,
+        request,
+        "computer-use-start",
+      );
+      return this.requireMainWindow().sidebar.computerUse.startSession(
+        validatedRequest,
+      );
     });
 
     ipcMain.handle("computer-use-generate-script", async (_, request) => {
       logger.info("Computer use script generation started");
-      return this.requireMainWindow().sidebar.computerUse.generateScript(
+      const validatedRequest = parseIpcInput(
+        ipcSchemas.computerUseRequest,
         request,
+        "computer-use-generate-script",
+      );
+      return this.requireMainWindow().sidebar.computerUse.generateScript(
+        validatedRequest,
       );
     });
 
@@ -412,32 +464,78 @@ export class EventManager {
 
     ipcMain.handle("sandbox-create-file", (_, input) => {
       this.logChannel("sandbox-create-file");
-      return this.requireMainWindow().sidebar.sandbox.createFile(input);
+      const validatedInput = parseIpcInput(
+        ipcSchemas.sandboxFileInput,
+        input,
+        "sandbox-create-file",
+      );
+      return this.requireMainWindow().sidebar.sandbox.createFile(
+        validatedInput,
+      );
     });
 
     ipcMain.handle("sandbox-update-file", (_, fileId: string, patch) => {
       this.logChannel("sandbox-update-file");
-      return this.requireMainWindow().sidebar.sandbox.updateFile(fileId, patch);
+      const validatedTabId = parseIpcInput(
+        ipcSchemas.tabId,
+        fileId,
+        "sandbox-update-file",
+      );
+      const validatedPatch = parseIpcInput(
+        ipcSchemas.sandboxFilePatch,
+        patch,
+        "sandbox-update-file",
+      );
+      return this.requireMainWindow().sidebar.sandbox.updateFile(
+        validatedTabId,
+        validatedPatch,
+      );
     });
 
     ipcMain.handle("sandbox-delete-file", (_, fileId: string) => {
       this.logChannel("sandbox-delete-file");
-      return this.requireMainWindow().sidebar.sandbox.deleteFile(fileId);
+      const validatedFileId = parseIpcInput(
+        ipcSchemas.tabId,
+        fileId,
+        "sandbox-delete-file",
+      );
+      return this.requireMainWindow().sidebar.sandbox.deleteFile(
+        validatedFileId,
+      );
     });
 
     ipcMain.handle("sandbox-set-active-file", (_, fileId: string) => {
       this.logChannel("sandbox-set-active-file");
-      return this.requireMainWindow().sidebar.sandbox.setActiveFile(fileId);
+      const validatedFileId = parseIpcInput(
+        ipcSchemas.tabId,
+        fileId,
+        "sandbox-set-active-file",
+      );
+      return this.requireMainWindow().sidebar.sandbox.setActiveFile(
+        validatedFileId,
+      );
     });
 
     ipcMain.handle("sandbox-set-entry-file", (_, fileId: string) => {
       this.logChannel("sandbox-set-entry-file");
-      return this.requireMainWindow().sidebar.sandbox.setEntryFile(fileId);
+      const validatedFileId = parseIpcInput(
+        ipcSchemas.tabId,
+        fileId,
+        "sandbox-set-entry-file",
+      );
+      return this.requireMainWindow().sidebar.sandbox.setEntryFile(
+        validatedFileId,
+      );
     });
 
     ipcMain.handle("sandbox-run", async (_, request) => {
       logger.info("Sandbox run started");
-      return this.requireMainWindow().sidebar.sandbox.run(request);
+      const validatedRequest = parseIpcInput(
+        ipcSchemas.sandboxRunRequest,
+        request,
+        "sandbox-run",
+      );
+      return this.requireMainWindow().sidebar.sandbox.run(validatedRequest);
     });
   }
 
@@ -448,12 +546,18 @@ export class EventManager {
     });
 
     ipcMain.handle("ai-settings-update", (_, settings) => {
+      const validatedSettings = parseIpcInput(
+        ipcSchemas.settingsPatch,
+        settings,
+        "ai-settings-update",
+      );
       logger.info("AI settings updated", {
-        provider: settings?.provider,
+        provider: validatedSettings.provider,
         hasModel:
-          typeof settings?.model === "string" && settings.model.length > 0,
+          typeof validatedSettings.model === "string" &&
+          validatedSettings.model.length > 0,
       });
-      const updated = this.settingsStore.updateSettings(settings);
+      const updated = this.settingsStore.updateSettings(validatedSettings);
       this.requireMainWindow().sidebar.view.webContents.send(
         "ai-settings-updated",
         updated,
@@ -467,13 +571,19 @@ export class EventManager {
     });
 
     ipcMain.handle("app-settings-update", (_, settings) => {
+      const validatedSettings = parseIpcInput(
+        ipcSchemas.settingsPatch,
+        settings,
+        "app-settings-update",
+      );
       logger.info("App settings updated", {
-        provider: settings?.provider,
+        provider: validatedSettings.provider,
         hasModel:
-          typeof settings?.model === "string" && settings.model.length > 0,
-        searchEngine: settings?.searchEngine,
+          typeof validatedSettings.model === "string" &&
+          validatedSettings.model.length > 0,
+        searchEngine: validatedSettings.searchEngine,
       });
-      const updated = this.settingsStore.updateSettings(settings);
+      const updated = this.settingsStore.updateSettings(validatedSettings);
       const mainWindow = this.requireMainWindow();
       mainWindow.sidebar.view.webContents.send("ai-settings-updated", updated);
       mainWindow.topBar.view.webContents.send("app-settings-updated", updated);

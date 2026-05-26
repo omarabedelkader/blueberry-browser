@@ -28,6 +28,13 @@ export const AddressBar: React.FC = () => {
   const [hasUpdate, setHasUpdate] = useState(false);
 
   useEffect(() => {
+    const removeAppSettingsListener = window.topBarAPI.onAppSettingsUpdated(
+      (settings) => setSearchEngine(settings.searchEngine),
+    );
+    const removeUpdateStateListener = window.topBarAPI.onUpdateStateChanged(
+      (state) => setHasUpdate(state.hasUpdate && !state.dismissed),
+    );
+
     const loadState = async () => {
       try {
         const [settings, updateState] = await Promise.all([
@@ -42,16 +49,10 @@ export const AddressBar: React.FC = () => {
     };
 
     void loadState();
-    window.topBarAPI.onAppSettingsUpdated((settings) =>
-      setSearchEngine(settings.searchEngine),
-    );
-    window.topBarAPI.onUpdateStateChanged((state) =>
-      setHasUpdate(state.hasUpdate && !state.dismissed),
-    );
 
     return () => {
-      window.topBarAPI.removeAppSettingsUpdatedListener();
-      window.topBarAPI.removeUpdateStateChangedListener();
+      removeAppSettingsListener();
+      removeUpdateStateListener();
     };
   }, []);
 

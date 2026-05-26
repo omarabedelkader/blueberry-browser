@@ -129,7 +129,7 @@ interface SidebarAPI {
           >;
     }>
   >;
-  onChatResponse: (callback: (data: ChatResponse) => void) => void;
+  onChatResponse: (callback: (data: ChatResponse) => void) => () => void;
   onMessagesUpdated: (
     callback: (
       messages: Array<{
@@ -144,11 +144,9 @@ interface SidebarAPI {
                   image?: string;
                 }
             >;
-      }>
-    ) => void
-  ) => void;
-  removeChatResponseListener: () => void;
-  removeMessagesUpdatedListener: () => void;
+      }>,
+    ) => void,
+  ) => () => void;
 
   // Page content access
   getPageContent: () => Promise<string | null>;
@@ -168,10 +166,8 @@ interface SidebarAPI {
   }>;
   getAppSettings: () => Promise<AISettings>;
   updateAppSettings: (settings: Partial<AISettings>) => Promise<AISettings>;
-  onAISettingsUpdated: (callback: (settings: AISettings) => void) => void;
-  removeAISettingsUpdatedListener: () => void;
-  onOpenSettings: (callback: () => void) => void;
-  removeOpenSettingsListener: () => void;
+  onAISettingsUpdated: (callback: (settings: AISettings) => void) => () => void;
+  onOpenSettings: (callback: () => void) => () => void;
 
   // Computer use
   getComputerUseState: () => Promise<ComputerUseState>;
@@ -179,8 +175,9 @@ interface SidebarAPI {
   generateComputerUseScript: (request: {
     goal: string;
   }) => Promise<ComputerUseState>;
-  onComputerUseState: (callback: (state: ComputerUseState) => void) => void;
-  removeComputerUseStateListener: () => void;
+  onComputerUseState: (
+    callback: (state: ComputerUseState) => void,
+  ) => () => void;
 
   // Sandbox
   getSandboxState: () => Promise<SandboxState>;
@@ -190,14 +187,15 @@ interface SidebarAPI {
   }) => Promise<SandboxState>;
   updateSandboxFile: (
     fileId: string,
-    patch: { name?: string; content?: string; isScoped?: boolean }
+    patch: { name?: string; content?: string; isScoped?: boolean },
   ) => Promise<SandboxState>;
   deleteSandboxFile: (fileId: string) => Promise<SandboxState>;
   setActiveSandboxFile: (fileId: string) => Promise<SandboxState>;
   setSandboxEntryFile: (fileId: string) => Promise<SandboxState>;
-  runSandbox: (request?: { entryFileId?: string | null }) => Promise<SandboxState>;
-  onSandboxState: (callback: (state: SandboxState) => void) => void;
-  removeSandboxStateListener: () => void;
+  runSandbox: (request?: {
+    entryFileId?: string | null;
+  }) => Promise<SandboxState>;
+  onSandboxState: (callback: (state: SandboxState) => void) => () => void;
 }
 
 declare global {

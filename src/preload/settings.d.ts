@@ -49,10 +49,10 @@ interface SettingsAPI {
   checkForUpdates: () => Promise<UpdateState>;
   dismissUpdate: () => Promise<UpdateState>;
   openReleasePage: () => Promise<void>;
-  onAppSettingsUpdated: (callback: (settings: AppSettings) => void) => void;
-  removeAppSettingsUpdatedListener: () => void;
-  onUpdateStateChanged: (callback: (state: UpdateState) => void) => void;
-  removeUpdateStateChangedListener: () => void;
+  onAppSettingsUpdated: (
+    callback: (settings: AppSettings) => void,
+  ) => () => void;
+  onUpdateStateChanged: (callback: (state: UpdateState) => void) => () => void;
 }
 
 declare global {

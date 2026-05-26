@@ -4,6 +4,7 @@ import { TopBar } from "./TopBar";
 import { SideBar } from "./SideBar";
 import { AISettingsStore } from "./AISettings";
 import { BrowserSettings } from "./BrowserSettings";
+import { attachExternalWindowOpenHandler } from "./windowOpenHandler";
 
 export class Window {
   private _baseWindow: BaseWindow;
@@ -55,14 +56,6 @@ export class Window {
       }
     });
 
-    // Handle external link opening
-    this.tabsMap.forEach((tab) => {
-      tab.webContents.setWindowOpenHandler((details) => {
-        shell.openExternal(details.url);
-        return { action: "deny" };
-      });
-    });
-
     this.setupEventListeners();
   }
 
@@ -100,6 +93,7 @@ export class Window {
       url || AISettingsStore.getInstance().getSettings().homepage;
     const tabId = `tab-${++this.tabCounter}`;
     const tab = new Tab(tabId, initialUrl);
+    attachExternalWindowOpenHandler(tab.webContents, shell.openExternal);
 
     // Add the tab's WebContentsView to the window
     this._baseWindow.contentView.addChildView(tab.view);
@@ -265,7 +259,12 @@ export class Window {
     return nextWidth;
   }
 
-  getSidebarState(): { width: number; minWidth: number; maxWidth: number; isVisible: boolean } {
+  getSidebarState(): {
+    width: number;
+    minWidth: number;
+    maxWidth: number;
+    isVisible: boolean;
+  } {
     return {
       width: this._sideBar.getWidth(),
       minWidth: this._sideBar.getMinWidth(),

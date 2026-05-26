@@ -50,17 +50,16 @@ interface TopBarAPI {
 
   // Tab actions
   tabScreenshot: (tabId: string) => Promise<string | null>;
-  tabRunJs: (tabId: string, code: string) => Promise<any>;
 
   // Sidebar
   toggleSidebar: () => Promise<void>;
   openBrowserSettings: () => Promise<void>;
   getAppSettings: () => Promise<AppSettings>;
   getUpdateState: () => Promise<UpdateState>;
-  onAppSettingsUpdated: (callback: (settings: AppSettings) => void) => void;
-  removeAppSettingsUpdatedListener: () => void;
-  onUpdateStateChanged: (callback: (state: UpdateState) => void) => void;
-  removeUpdateStateChangedListener: () => void;
+  onAppSettingsUpdated: (
+    callback: (settings: AppSettings) => void,
+  ) => () => void;
+  onUpdateStateChanged: (callback: (state: UpdateState) => void) => () => void;
 }
 
 declare global {

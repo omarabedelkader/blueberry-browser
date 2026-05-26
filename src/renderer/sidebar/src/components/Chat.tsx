@@ -3,10 +3,16 @@ import { Bot, LoaderCircle, Plus, Send } from "lucide-react";
 import { Button } from "@common/components/Button";
 import { cn } from "@common/lib/utils";
 
-type SidebarLayout = Awaited<ReturnType<typeof window.sidebarAPI.getSidebarLayout>>;
+type SidebarLayout = Awaited<
+  ReturnType<typeof window.sidebarAPI.getSidebarLayout>
+>;
 type TabInfo = Awaited<ReturnType<typeof window.sidebarAPI.getActiveTabInfo>>;
-type ChatHistoryMessage = Awaited<ReturnType<typeof window.sidebarAPI.getMessages>>[number];
-type ComputerUseState = Awaited<ReturnType<typeof window.sidebarAPI.getComputerUseState>>;
+type ChatHistoryMessage = Awaited<
+  ReturnType<typeof window.sidebarAPI.getMessages>
+>[number];
+type ComputerUseState = Awaited<
+  ReturnType<typeof window.sidebarAPI.getComputerUseState>
+>;
 
 const COMMAND_SUGGESTIONS = [
   {
@@ -15,7 +21,8 @@ const COMMAND_SUGGESTIONS = [
   },
   {
     command: "@remember this",
-    description: "Save a memory directly without sending it to the model first.",
+    description:
+      "Save a memory directly without sending it to the model first.",
   },
 ] as const;
 
@@ -41,7 +48,12 @@ const extractMessageText = (message: ChatHistoryMessage): string => {
         if (typeof part === "string") {
           return part;
         }
-        if (part && typeof part === "object" && "text" in part && typeof part.text === "string") {
+        if (
+          part &&
+          typeof part === "object" &&
+          "text" in part &&
+          typeof part.text === "string"
+        ) {
           return part.text;
         }
         return [];
@@ -56,7 +68,11 @@ const extractMessageText = (message: ChatHistoryMessage): string => {
 const hasScreenshot = (message: ChatHistoryMessage): boolean =>
   Array.isArray(message.content) &&
   message.content.some(
-    (part) => typeof part === "object" && part !== null && "type" in part && part.type === "image"
+    (part) =>
+      typeof part === "object" &&
+      part !== null &&
+      "type" in part &&
+      part.type === "image",
   );
 
 export const Chat: React.FC = () => {
@@ -67,7 +83,8 @@ export const Chat: React.FC = () => {
   const [isSending, setIsSending] = useState(false);
   const [isComputerUseRunning, setIsComputerUseRunning] = useState(false);
   const [streamingThought, setStreamingThought] = useState("");
-  const [computerUseState, setComputerUseState] = useState<ComputerUseState | null>(null);
+  const [computerUseState, setComputerUseState] =
+    useState<ComputerUseState | null>(null);
   const dragState = useRef<{
     startMouseX: number;
     startWidth: number;
@@ -77,13 +94,43 @@ export const Chat: React.FC = () => {
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    const removeMessagesUpdatedListener = window.sidebarAPI.onMessagesUpdated(
+      (history) => {
+        setMessages(history as ChatHistoryMessage[]);
+      },
+    );
+    const removeChatResponseListener = window.sidebarAPI.onChatResponse(
+      (data) => {
+        if (!data.isComplete) {
+          setStreamingThought((previous) => previous + data.content);
+          return;
+        }
+
+        setStreamingThought("");
+        if (data.isComplete) {
+          setIsSending(false);
+        }
+      },
+    );
+    const removeComputerUseStateListener = window.sidebarAPI.onComputerUseState(
+      (state) => {
+        const nextState = state as ComputerUseState | null;
+        setComputerUseState(nextState);
+        setIsComputerUseRunning(Boolean(nextState?.isRunning));
+        if (!nextState?.isRunning) {
+          setStreamingThought("");
+        }
+      },
+    );
+
     const load = async () => {
-      const [history, activeBrowserTab, sidebarLayout, computerUseState] = await Promise.all([
-        window.sidebarAPI.getMessages(),
-        window.sidebarAPI.getActiveTabInfo(),
-        window.sidebarAPI.getSidebarLayout(),
-        window.sidebarAPI.getComputerUseState(),
-      ]);
+      const [history, activeBrowserTab, sidebarLayout, computerUseState] =
+        await Promise.all([
+          window.sidebarAPI.getMessages(),
+          window.sidebarAPI.getActiveTabInfo(),
+          window.sidebarAPI.getSidebarLayout(),
+          window.sidebarAPI.getComputerUseState(),
+        ]);
 
       setMessages(history);
       setTabInfo(activeBrowserTab);
@@ -98,36 +145,11 @@ export const Chat: React.FC = () => {
       void window.sidebarAPI.getActiveTabInfo().then(setTabInfo);
     }, 2500);
 
-    window.sidebarAPI.onMessagesUpdated((history) => {
-      setMessages(history as ChatHistoryMessage[]);
-    });
-
-    window.sidebarAPI.onChatResponse((data) => {
-      if (!data.isComplete) {
-        setStreamingThought((previous) => previous + data.content);
-        return;
-      }
-
-      setStreamingThought("");
-      if (data.isComplete) {
-        setIsSending(false);
-      }
-    });
-
-    window.sidebarAPI.onComputerUseState((state) => {
-      const nextState = state as ComputerUseState | null;
-      setComputerUseState(nextState);
-      setIsComputerUseRunning(Boolean(nextState?.isRunning));
-      if (!nextState?.isRunning) {
-        setStreamingThought("");
-      }
-    });
-
     return () => {
       window.clearInterval(interval);
-      window.sidebarAPI.removeMessagesUpdatedListener();
-      window.sidebarAPI.removeChatResponseListener();
-      window.sidebarAPI.removeComputerUseStateListener();
+      removeMessagesUpdatedListener();
+      removeChatResponseListener();
+      removeComputerUseStateListener();
     };
   }, []);
 
@@ -146,13 +168,16 @@ export const Chat: React.FC = () => {
         return;
       }
 
-      const rawWidth = currentDrag.startWidth + (currentDrag.startMouseX - event.clientX);
+      const rawWidth =
+        currentDrag.startWidth + (currentDrag.startMouseX - event.clientX);
       const nextWidth = Math.max(
         currentDrag.minWidth,
-        Math.min(currentDrag.maxWidth, Math.round(rawWidth))
+        Math.min(currentDrag.maxWidth, Math.round(rawWidth)),
       );
 
-      setLayout((previous) => (previous ? { ...previous, width: nextWidth } : previous));
+      setLayout((previous) =>
+        previous ? { ...previous, width: nextWidth } : previous,
+      );
       void window.sidebarAPI.setSidebarWidth(nextWidth);
     };
 
@@ -191,11 +216,12 @@ export const Chat: React.FC = () => {
       tabInfo?.title
         ? `Summarize this page and tell me what matters most about "${tabInfo.title}".`
         : "Summarize the current page and explain the main points.",
-    [tabInfo?.title]
+    [tabInfo?.title],
   );
 
   const isComposerLocked = isSending || isComputerUseRunning;
-  const showCommandSuggestions = draft.trim() === "/" || draft.trim().startsWith("/");
+  const showCommandSuggestions =
+    draft.trim() === "/" || draft.trim().startsWith("/");
   const activeComputerUseSession = getActiveSession(computerUseState);
   const liveThoughtLines = useMemo(() => {
     if (streamingThought.trim()) {
@@ -209,8 +235,13 @@ export const Chat: React.FC = () => {
     return [];
   }, [activeComputerUseSession?.logs, streamingThought]);
   const activeStepLabel =
-    activeComputerUseSession?.steps.find((step) => step.status === "running")?.label ?? null;
-  const thinkingTitle = isComputerUseRunning ? "Agent Working" : isSending ? "Agent Thinking" : null;
+    activeComputerUseSession?.steps.find((step) => step.status === "running")
+      ?.label ?? null;
+  const thinkingTitle = isComputerUseRunning
+    ? "Agent Working"
+    : isSending
+      ? "Agent Thinking"
+      : null;
 
   const sendMessage = async (message: string) => {
     const trimmedMessage = message.trim();
@@ -243,7 +274,10 @@ export const Chat: React.FC = () => {
 
       <div className="border-b border-border/80 px-4 py-3">
         <p className="truncate text-xs text-muted-foreground">
-          Active tab: <span className="font-medium text-foreground">{tabInfo?.title ?? "Loading..."}</span>
+          Active tab:{" "}
+          <span className="font-medium text-foreground">
+            {tabInfo?.title ?? "Loading..."}
+          </span>
         </p>
       </div>
 
@@ -281,20 +315,23 @@ export const Chat: React.FC = () => {
               return (
                 <div
                   key={`${message.role}-${index}`}
-                  className={cn("flex", isUser ? "justify-end" : "justify-start")}
+                  className={cn(
+                    "flex",
+                    isUser ? "justify-end" : "justify-start",
+                  )}
                 >
                   <div
                     className={cn(
                       "max-w-[92%] rounded-[24px] px-4 py-3 shadow-sm",
                       isUser
                         ? "bg-foreground text-background"
-                        : "border border-border bg-card text-foreground"
+                        : "border border-border bg-card text-foreground",
                     )}
                   >
                     <p
                       className={cn(
                         "text-[11px] uppercase tracking-[0.18em]",
-                        isUser ? "text-background/70" : "text-muted-foreground"
+                        isUser ? "text-background/70" : "text-muted-foreground",
                       )}
                     >
                       {isUser ? "You" : "Agent"}
@@ -303,7 +340,9 @@ export const Chat: React.FC = () => {
                       <p
                         className={cn(
                           "mt-2 text-xs",
-                          isUser ? "text-background/80" : "text-muted-foreground"
+                          isUser
+                            ? "text-background/80"
+                            : "text-muted-foreground",
                         )}
                       >
                         Screenshot included from the current page.
@@ -322,10 +361,12 @@ export const Chat: React.FC = () => {
             <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-secondary text-muted-foreground">
               <Bot className="size-5" />
             </div>
-            <h3 className="mt-4 text-sm font-semibold text-foreground">Start a chat</h3>
+            <h3 className="mt-4 text-sm font-semibold text-foreground">
+              Start a chat
+            </h3>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              Ask a question about the current website. The agent will include live page
-              context and a screenshot automatically.
+              Ask a question about the current website. The agent will include
+              live page context and a screenshot automatically.
             </p>
           </div>
         )}
@@ -354,15 +395,15 @@ export const Chat: React.FC = () => {
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (isComposerLocked) {
-                  return;
-                }
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void sendMessage(draft);
-                }
-              }}
+            onKeyDown={(event) => {
+              if (isComposerLocked) {
+                return;
+              }
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void sendMessage(draft);
+              }
+            }}
             rows={4}
             className="min-h-[112px] w-full resize-none bg-transparent text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
             placeholder={
@@ -398,7 +439,9 @@ export const Chat: React.FC = () => {
           )}
           {!showCommandSuggestions && !isComposerLocked && (
             <p className="mt-3 px-1 text-xs text-muted-foreground">
-              Type <code className="rounded bg-secondary px-1 py-0.5">/help</code> to see available commands.
+              Type{" "}
+              <code className="rounded bg-secondary px-1 py-0.5">/help</code> to
+              see available commands.
             </p>
           )}
           <div className="mt-3 flex items-center justify-end gap-2">

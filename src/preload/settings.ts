@@ -1,5 +1,6 @@
 import { contextBridge } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
+import { subscribeToIpcChannel } from "./ipcSubscription";
 
 interface AppSettings {
   provider: "ollama" | "openai" | "anthropic";
@@ -44,20 +45,18 @@ const settingsAPI = {
   openReleasePage: () =>
     electronAPI.ipcRenderer.invoke("update-open-release-page"),
   onAppSettingsUpdated: (callback: (settings: AppSettings) => void) => {
-    electronAPI.ipcRenderer.on("app-settings-updated", (_, settings) =>
-      callback(settings),
+    return subscribeToIpcChannel(
+      electronAPI.ipcRenderer,
+      "app-settings-updated",
+      callback,
     );
-  },
-  removeAppSettingsUpdatedListener: () => {
-    electronAPI.ipcRenderer.removeAllListeners("app-settings-updated");
   },
   onUpdateStateChanged: (callback: (state: UpdateState) => void) => {
-    electronAPI.ipcRenderer.on("update-state-changed", (_, state) =>
-      callback(state),
+    return subscribeToIpcChannel(
+      electronAPI.ipcRenderer,
+      "update-state-changed",
+      callback,
     );
-  },
-  removeUpdateStateChangedListener: () => {
-    electronAPI.ipcRenderer.removeAllListeners("update-state-changed");
   },
 };
 

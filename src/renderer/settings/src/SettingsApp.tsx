@@ -81,6 +81,13 @@ export const SettingsApp: React.FC = () => {
   const { isDarkMode, setDarkMode } = useDarkMode();
 
   useEffect(() => {
+    const removeAppSettingsListener = window.settingsAPI.onAppSettingsUpdated(
+      (next) => setSettings(next),
+    );
+    const removeUpdateStateListener = window.settingsAPI.onUpdateStateChanged(
+      (next) => setUpdateState(next),
+    );
+
     const load = async () => {
       const [next, savedMemories, nextUpdateState] = await Promise.all([
         window.settingsAPI.getAppSettings(),
@@ -93,12 +100,10 @@ export const SettingsApp: React.FC = () => {
     };
 
     void load();
-    window.settingsAPI.onAppSettingsUpdated((next) => setSettings(next));
-    window.settingsAPI.onUpdateStateChanged((next) => setUpdateState(next));
 
     return () => {
-      window.settingsAPI.removeAppSettingsUpdatedListener();
-      window.settingsAPI.removeUpdateStateChangedListener();
+      removeAppSettingsListener();
+      removeUpdateStateListener();
     };
   }, []);
 

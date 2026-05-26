@@ -1,5 +1,6 @@
 import { contextBridge } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
+import { subscribeToIpcChannel } from "./ipcSubscription";
 
 // TopBar specific APIs
 const topBarAPI = {
@@ -25,8 +26,6 @@ const topBarAPI = {
   // Tab actions
   tabScreenshot: (tabId: string) =>
     electronAPI.ipcRenderer.invoke("tab-screenshot", tabId),
-  tabRunJs: (tabId: string, code: string) =>
-    electronAPI.ipcRenderer.invoke("tab-run-js", tabId, code),
 
   // Sidebar
   toggleSidebar: () => electronAPI.ipcRenderer.invoke("toggle-sidebar"),
@@ -35,20 +34,18 @@ const topBarAPI = {
   getAppSettings: () => electronAPI.ipcRenderer.invoke("app-settings-get"),
   getUpdateState: () => electronAPI.ipcRenderer.invoke("update-state-get"),
   onAppSettingsUpdated: (callback: (settings: unknown) => void) => {
-    electronAPI.ipcRenderer.on("app-settings-updated", (_, settings) =>
-      callback(settings),
+    return subscribeToIpcChannel(
+      electronAPI.ipcRenderer,
+      "app-settings-updated",
+      callback,
     );
-  },
-  removeAppSettingsUpdatedListener: () => {
-    electronAPI.ipcRenderer.removeAllListeners("app-settings-updated");
   },
   onUpdateStateChanged: (callback: (state: unknown) => void) => {
-    electronAPI.ipcRenderer.on("update-state-changed", (_, state) =>
-      callback(state),
+    return subscribeToIpcChannel(
+      electronAPI.ipcRenderer,
+      "update-state-changed",
+      callback,
     );
-  },
-  removeUpdateStateChangedListener: () => {
-    electronAPI.ipcRenderer.removeAllListeners("update-state-changed");
   },
 };
 
