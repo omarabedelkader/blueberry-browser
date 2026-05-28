@@ -10,6 +10,8 @@ import { AISettingsStore, type SearchEngine } from "./AISettings";
 import { logger } from "./Logger";
 import { MemoryStore, type MemoryEntry } from "./MemoryStore";
 import { compactConversationWindow } from "./llmHistory";
+import { extractComparisonRequest } from "./comparisonRequest";
+import type { Tab } from "./Tab";
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -27,6 +29,14 @@ interface StreamChunk {
 interface SearchResultCandidate {
   href: string;
   title: string;
+}
+
+interface ComparisonPageResult {
+  query: string;
+  openedUrl: string;
+  title: string;
+  scannedTextLength: number;
+  openedWebsite: boolean;
 }
 
 type ParsedLocalCommand =
@@ -138,6 +148,10 @@ export class LLMClient {
 
       // Send updated messages to renderer
       this.sendMessagesToRenderer();
+
+      if (await this.handleComparisonRequest(request)) {
+        return;
+      }
 
       if (await this.handleDirectSearchRequest(request)) {
         return;
@@ -337,6 +351,130 @@ export class LLMClient {
     return true;
   }
 
+  private async handleComparisonRequest(
+    request: ChatRequest,
+  ): Promise<boolean> {
+    const comparison = extractComparisonRequest(request.message);
+    if (!comparison) {
+      return false;
+    }
+
+    if (!this.window) {
+      this.sendErrorMessage(
+        request.messageId,
+        "Comparison browsing is unavailable because the main window is not ready.",
+      );
+      return true;
+    }
+
+    const searchEngine = this.settingsStore.getSettings().searchEngine;
+    const providerLabel = this.getSearchEngineLabel(searchEngine);
+    const leftUrl = this.buildSearchUrl(comparison.left, searchEngine);
+    const rightUrl = this.buildSearchUrl(comparison.right, searchEngine);
+
+    this.sendThought(
+      [
+        "Thinking about the comparison.",
+        `I should open split view and search ${providerLabel} for both sides.`,
+        `Left pane: "${comparison.left}".`,
+        `Right pane: "${comparison.right}".`,
+      ].join("\n"),
+    );
+
+    try {
+      if (!this.window.getSplitState().isSplit) {
+        this.window.toggleSplitView();
+      }
+
+      const [leftTabId, rightTabId] = this.window.getSplitState().tabIds;
+      const leftTab = leftTabId ? this.window.getTab(leftTabId) : null;
+      const rightTab = rightTabId ? this.window.getTab(rightTabId) : null;
+
+      if (!leftTab || !rightTab) {
+        throw new Error(
+          "Split tabs were not available after opening split view.",
+        );
+      }
+
+      const [leftResult, rightResult] = await Promise.all([
+        this.openComparisonSide(leftTab, comparison.left, leftUrl),
+        this.openComparisonSide(rightTab, comparison.right, rightUrl),
+      ]);
+      this.window.switchActiveTab(leftTab.id);
+
+      const responseLines = [
+        `I opened split view, searched ${providerLabel}, entered the top website result for each side, and scanned both pages.`,
+        "",
+        `Left: "${leftResult.query}"`,
+        `Opened: ${leftResult.title}`,
+        `URL: ${leftResult.openedUrl}`,
+        `Scanned: ${leftResult.scannedTextLength.toLocaleString()} characters of page text.`,
+        "",
+        `Right: "${rightResult.query}"`,
+        `Opened: ${rightResult.title}`,
+        `URL: ${rightResult.openedUrl}`,
+        `Scanned: ${rightResult.scannedTextLength.toLocaleString()} characters of page text.`,
+      ];
+
+      if (!leftResult.openedWebsite || !rightResult.openedWebsite) {
+        responseLines.push(
+          "",
+          "One side stayed on the search results page because I could not confidently identify a website result there.",
+        );
+      }
+
+      const response = responseLines.join("\n");
+      this.appendAssistantMessage(response);
+      this.sendStreamChunk(request.messageId, {
+        content: response,
+        isComplete: true,
+      });
+    } catch (error) {
+      this.sendErrorMessage(
+        request.messageId,
+        `I tried to open the comparison in split view, but it failed: ${this.getErrorMessage(
+          error,
+        )}`,
+      );
+    }
+
+    return true;
+  }
+
+  private async openComparisonSide(
+    tab: Tab,
+    query: string,
+    searchUrl: string,
+  ): Promise<ComparisonPageResult> {
+    await tab.loadURL(searchUrl);
+    const firstResult = await this.findFirstSearchResult(tab);
+
+    if (firstResult) {
+      this.sendThought(
+        `For "${query}", I found "${firstResult.title}".\nOpening that website now.\n`,
+      );
+      await tab.loadURL(firstResult.href);
+    }
+
+    const scannedText = await this.getReadableTabText(tab);
+    return {
+      query,
+      openedUrl: tab.url,
+      title: firstResult?.title || tab.title || "Search results",
+      scannedTextLength: scannedText.length,
+      openedWebsite: Boolean(firstResult),
+    };
+  }
+
+  private async getReadableTabText(tab: Tab): Promise<string> {
+    try {
+      return (await tab.getTabText()).replace(/\s+/g, " ").trim();
+    } catch (error) {
+      logger.error("Failed to scan comparison page text", error);
+      return "";
+    }
+  }
+
   private extractDirectSearchQuery(message: string): string | null {
     const trimmed = message.trim();
     if (!trimmed) {
@@ -390,13 +528,15 @@ export class LLMClient {
     }
   }
 
-  private async findFirstSearchResult(): Promise<SearchResultCandidate | null> {
-    if (!this.window?.activeTab) {
+  private async findFirstSearchResult(
+    tab = this.window?.activeTab ?? null,
+  ): Promise<SearchResultCandidate | null> {
+    if (!tab) {
       return null;
     }
 
     try {
-      const candidate = await this.window.activeTab.runJs(`
+      const candidate = await tab.runJs(`
         (() => {
           const text = (value) => (value || "").replace(/\\s+/g, " ").trim();
           const hostname = window.location.hostname;

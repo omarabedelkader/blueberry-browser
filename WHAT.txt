@@ -1,8 +1,16 @@
-- AI Panel
+Already done :
+
+- enhanced AI Panel
 - fine tuning model 
 - tool calling and agent backend
 - automatic update 
-- automatic summariy at the end 
-- capturing a screenshot of the current page 
+- automatic summary at the end 
+- capturing a screenshot of the current page ( and send it in the prompt )
 - memory ( word detection )
+
+
+
+
+Future work:
+- more fine tuning ( big models )
 - 

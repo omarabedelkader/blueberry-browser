@@ -12,6 +12,9 @@ const topBarAPI = {
   switchTab: (tabId: string) =>
     electronAPI.ipcRenderer.invoke("switch-tab", tabId),
   getTabs: () => electronAPI.ipcRenderer.invoke("get-tabs"),
+  toggleSplitView: (url?: string) =>
+    electronAPI.ipcRenderer.invoke("toggle-split-view", url),
+  getSplitState: () => electronAPI.ipcRenderer.invoke("get-split-state"),
 
   // Tab navigation
   navigateTab: (tabId: string, url: string) =>

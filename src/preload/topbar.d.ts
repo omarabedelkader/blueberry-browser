@@ -5,8 +5,15 @@ interface TabInfo {
   title: string;
   url: string;
   isActive: boolean;
+  isSplit: boolean;
+  splitIndex: number | null;
   canGoBack: boolean;
   canGoForward: boolean;
+}
+
+interface SplitState {
+  isSplit: boolean;
+  tabIds: string[];
 }
 
 interface AppSettings {
@@ -41,6 +48,8 @@ interface TopBarAPI {
   closeTab: (tabId: string) => Promise<boolean>;
   switchTab: (tabId: string) => Promise<boolean>;
   getTabs: () => Promise<TabInfo[]>;
+  toggleSplitView: (url?: string) => Promise<boolean>;
+  getSplitState: () => Promise<SplitState>;
 
   // Tab navigation
   navigateTab: (tabId: string, url: string) => Promise<void>;

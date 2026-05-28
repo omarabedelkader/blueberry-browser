@@ -11,6 +11,8 @@ interface TabInfo {
   title: string;
   url: string;
   isActive: boolean;
+  isSplit: boolean;
+  splitIndex: number | null;
   canGoBack: boolean;
   canGoForward: boolean;
 }
@@ -18,16 +20,20 @@ interface TabInfo {
 interface BrowserContextType {
   tabs: TabInfo[];
   activeTab: TabInfo | null;
+  splitTabs: TabInfo[];
+  isSplitView: boolean;
   isLoading: boolean;
 
   // Tab management
   createTab: (url?: string) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   switchTab: (tabId: string) => Promise<void>;
+  toggleSplitView: () => Promise<void>;
   refreshTabs: () => Promise<void>;
 
   // Navigation
   navigateToUrl: (url: string) => Promise<void>;
+  navigateTabToUrl: (tabId: string, url: string) => Promise<void>;
   goBack: () => Promise<void>;
   goForward: () => Promise<void>;
   reload: () => Promise<void>;
@@ -38,7 +44,7 @@ interface BrowserContextType {
 
 const BrowserContext = createContext<BrowserContextType | null>(null);
 
-export const useBrowser = () => {
+export const useBrowser = (): BrowserContextType => {
   const context = useContext(BrowserContext);
   if (!context) {
     throw new Error("useBrowser must be used within a BrowserProvider");
@@ -53,6 +59,10 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isLoading, setIsLoading] = useState(false);
 
   const activeTab = tabs.find((tab) => tab.isActive) || null;
+  const splitTabs = tabs
+    .filter((tab) => tab.isSplit)
+    .sort((left, right) => (left.splitIndex ?? 0) - (right.splitIndex ?? 0));
+  const isSplitView = splitTabs.length > 1;
 
   const refreshTabs = useCallback(async () => {
     try {
@@ -108,6 +118,18 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({
     [refreshTabs],
   );
 
+  const toggleSplitView = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await window.topBarAPI.toggleSplitView();
+      await refreshTabs();
+    } catch (error) {
+      console.error("Failed to toggle split view:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [refreshTabs]);
+
   const navigateToUrl = useCallback(
     async (url: string) => {
       if (!activeTab) return;
@@ -124,6 +146,22 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     },
     [activeTab, refreshTabs],
+  );
+
+  const navigateTabToUrl = useCallback(
+    async (tabId: string, url: string) => {
+      setIsLoading(true);
+      try {
+        await window.topBarAPI.switchTab(tabId);
+        await window.topBarAPI.navigateTab(tabId, url);
+        setTimeout(() => refreshTabs(), 500);
+      } catch (error) {
+        console.error("Failed to navigate tab:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [refreshTabs],
   );
 
   const goBack = useCallback(async () => {
@@ -182,12 +220,16 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({
   const value: BrowserContextType = {
     tabs,
     activeTab,
+    splitTabs,
+    isSplitView,
     isLoading,
     createTab,
     closeTab,
     switchTab,
+    toggleSplitView,
     refreshTabs,
     navigateToUrl,
+    navigateTabToUrl,
     goBack,
     goForward,
     reload,

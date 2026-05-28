@@ -10,6 +10,7 @@ export class Window {
   private _baseWindow: BaseWindow;
   private tabsMap: Map<string, Tab> = new Map();
   private activeTabId: string | null = null;
+  private splitTabIds: [string, string] | null = null;
   private tabCounter: number = 0;
   private _topBar: TopBar;
   private _sideBar: SideBar;
@@ -94,18 +95,15 @@ export class Window {
     const tabId = `tab-${++this.tabCounter}`;
     const tab = new Tab(tabId, initialUrl);
     attachExternalWindowOpenHandler(tab.webContents, shell.openExternal);
+    tab.webContents.on("focus", () => {
+      if (this.isTabVisible(tabId)) {
+        this.activeTabId = tabId;
+        this._baseWindow.setTitle(tab.title || "Blueberry Browser");
+      }
+    });
 
     // Add the tab's WebContentsView to the window
     this._baseWindow.contentView.addChildView(tab.view);
-
-    // Set the bounds to fill the window below the topbar and to the left of sidebar
-    const bounds = this._baseWindow.getBounds();
-    tab.view.setBounds({
-      x: 0,
-      y: 88, // Start below the topbar
-      width: bounds.width - this.getVisibleSidebarWidth(),
-      height: bounds.height - 88, // Subtract topbar height
-    });
 
     // Store the tab
     this.tabsMap.set(tabId, tab);
@@ -118,6 +116,7 @@ export class Window {
       tab.hide();
     }
 
+    this.updateTabBounds();
     return tab;
   }
 
@@ -135,6 +134,7 @@ export class Window {
 
     // Remove from our tabs map
     this.tabsMap.delete(tabId);
+    this.removeTabFromSplit(tabId);
 
     // If this was the active tab, switch to another tab
     if (this.activeTabId === tabId) {
@@ -148,6 +148,8 @@ export class Window {
     // If no tabs left, close the window
     if (this.tabsMap.size === 0) {
       this._baseWindow.close();
+    } else {
+      this.updateTabBounds();
     }
 
     return true;
@@ -159,8 +161,19 @@ export class Window {
       return false;
     }
 
-    // Hide the currently active tab
-    if (this.activeTabId && this.activeTabId !== tabId) {
+    if (this.splitTabIds && !this.splitTabIds.includes(tabId)) {
+      const activeSplitIndex = this.activeTabId === this.splitTabIds[1] ? 1 : 0;
+      const replacedTabId = this.splitTabIds[activeSplitIndex];
+      const replacedTab = this.tabsMap.get(replacedTabId);
+      if (replacedTab) {
+        replacedTab.hide();
+      }
+      this.splitTabIds[activeSplitIndex] = tabId;
+    } else if (
+      !this.splitTabIds &&
+      this.activeTabId &&
+      this.activeTabId !== tabId
+    ) {
       const currentTab = this.tabsMap.get(this.activeTabId);
       if (currentTab) {
         currentTab.hide();
@@ -170,11 +183,49 @@ export class Window {
     // Show the new active tab
     tab.show();
     this.activeTabId = tabId;
+    this.updateTabBounds();
 
     // Update the window title to match the tab title
     this._baseWindow.setTitle(tab.title || "Blueberry Browser");
 
     return true;
+  }
+
+  toggleSplitView(url?: string): boolean {
+    if (this.splitTabIds) {
+      const activeTab = this.activeTab;
+      this.splitTabIds = null;
+      this.tabsMap.forEach((tab) => {
+        if (activeTab && tab.id === activeTab.id) {
+          tab.show();
+        } else {
+          tab.hide();
+        }
+      });
+      this.updateTabBounds();
+      return false;
+    }
+
+    let leftTab = this.activeTab;
+    if (!leftTab) {
+      leftTab = this.createTab();
+    }
+
+    const rightTab = this.createTab(url);
+    this.splitTabIds = [leftTab.id, rightTab.id];
+    this.activeTabId = rightTab.id;
+    leftTab.show();
+    rightTab.show();
+    this.updateTabBounds();
+    this._baseWindow.setTitle(rightTab.title || "Blueberry Browser");
+    return true;
+  }
+
+  getSplitState(): { isSplit: boolean; tabIds: string[] } {
+    return {
+      isSplit: this.splitTabIds !== null,
+      tabIds: this.splitTabIds ? [...this.splitTabIds] : [],
+    };
   }
 
   getTab(tabId: string): Tab | null {
@@ -235,13 +286,51 @@ export class Window {
   private updateTabBounds(): void {
     const bounds = this._baseWindow.getBounds();
     const sidebarWidth = this.getVisibleSidebarWidth();
+    const contentWidth = bounds.width - sidebarWidth;
+    const contentHeight = bounds.height - 88;
+
+    if (this.splitTabIds) {
+      const [leftTabId, rightTabId] = this.splitTabIds;
+      const leftTab = this.tabsMap.get(leftTabId);
+      const rightTab = this.tabsMap.get(rightTabId);
+      const leftWidth = Math.floor(contentWidth / 2);
+      const rightWidth = contentWidth - leftWidth;
+
+      this.tabsMap.forEach((tab) => {
+        if (tab.id !== leftTabId && tab.id !== rightTabId) {
+          tab.hide();
+        }
+      });
+
+      if (leftTab) {
+        leftTab.view.setBounds({
+          x: 0,
+          y: 88,
+          width: leftWidth,
+          height: contentHeight,
+        });
+        leftTab.show();
+      }
+
+      if (rightTab) {
+        rightTab.view.setBounds({
+          x: leftWidth,
+          y: 88,
+          width: rightWidth,
+          height: contentHeight,
+        });
+        rightTab.show();
+      }
+
+      return;
+    }
 
     this.tabsMap.forEach((tab) => {
       tab.view.setBounds({
         x: 0,
         y: 88, // Start below the topbar
-        width: bounds.width - sidebarWidth,
-        height: bounds.height - 88, // Subtract topbar height
+        width: contentWidth,
+        height: contentHeight, // Subtract topbar height
       });
     });
   }
@@ -275,6 +364,33 @@ export class Window {
 
   private getVisibleSidebarWidth(): number {
     return this._sideBar.getIsVisible() ? this._sideBar.getWidth() : 0;
+  }
+
+  private isTabVisible(tabId: string): boolean {
+    if (this.splitTabIds) {
+      return this.splitTabIds.includes(tabId);
+    }
+    return this.activeTabId === tabId;
+  }
+
+  private removeTabFromSplit(tabId: string): void {
+    if (!this.splitTabIds?.includes(tabId)) {
+      return;
+    }
+
+    const remainingSplitTabId = this.splitTabIds.find((id) => id !== tabId);
+    this.splitTabIds = null;
+
+    if (remainingSplitTabId && this.tabsMap.has(remainingSplitTabId)) {
+      this.activeTabId = remainingSplitTabId;
+      this.tabsMap.forEach((tab) => {
+        if (tab.id === remainingSplitTabId) {
+          tab.show();
+        } else {
+          tab.hide();
+        }
+      });
+    }
   }
 
   // Getter for sidebar to access from main process

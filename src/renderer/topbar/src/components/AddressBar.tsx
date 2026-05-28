@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,6 +7,7 @@ import {
   PanelLeftClose,
   PanelLeft,
   Settings,
+  Columns2,
 } from "lucide-react";
 import { useBrowser } from "../contexts/BrowserContext";
 import { ToolBarButton } from "../components/ToolBarButton";
@@ -15,16 +16,215 @@ import { cn } from "@common/lib/utils";
 
 const INTERNAL_WELCOME_URL = "blueberry://welcome";
 
-export const AddressBar: React.FC = () => {
-  const { activeTab, navigateToUrl, goBack, goForward, reload, isLoading } =
-    useBrowser();
+type SearchEngine = "google" | "duckduckgo" | "bing";
+
+interface AddressTab {
+  id: string;
+  title: string;
+  url: string;
+  isActive: boolean;
+}
+
+interface AddressFieldProps {
+  tab: AddressTab | null;
+  searchEngine: SearchEngine;
+  isLoading: boolean;
+  isSplitPane?: boolean;
+  onActivate: (tabId: string) => Promise<void>;
+  onNavigate: (tabId: string, url: string) => Promise<void>;
+}
+
+function normalizeNavigationTarget(
+  value: string,
+  searchEngine: SearchEngine,
+): string {
+  let finalUrl = value.trim();
+
+  if (!finalUrl.startsWith("http://") && !finalUrl.startsWith("https://")) {
+    if (finalUrl.includes(".") && !finalUrl.includes(" ")) {
+      finalUrl = `https://${finalUrl}`;
+    } else {
+      const encoded = encodeURIComponent(finalUrl);
+      if (searchEngine === "duckduckgo") {
+        finalUrl = `https://duckduckgo.com/?q=${encoded}`;
+      } else if (searchEngine === "bing") {
+        finalUrl = `https://www.bing.com/search?q=${encoded}`;
+      } else {
+        finalUrl = `https://www.google.com/search?q=${encoded}`;
+      }
+    }
+  }
+
+  return finalUrl;
+}
+
+function getDomain(tab: AddressTab | null): string {
+  if (!tab?.url) return "";
+  if (tab.url === INTERNAL_WELCOME_URL) return "BlueBerry Browser";
+  try {
+    const urlObj = new URL(tab.url);
+    return urlObj.hostname.replace("www.", "");
+  } catch {
+    return tab.url;
+  }
+}
+
+function getPath(tab: AddressTab | null): string {
+  if (!tab?.url) return "";
+  if (tab.url === INTERNAL_WELCOME_URL) return "";
+  try {
+    const urlObj = new URL(tab.url);
+    return urlObj.pathname + urlObj.search + urlObj.hash;
+  } catch {
+    return "";
+  }
+}
+
+function getFavicon(tab: AddressTab | null): string | null {
+  if (!tab?.url) return null;
+  if (tab.url === INTERNAL_WELCOME_URL) return null;
+  try {
+    const domain = new URL(tab.url).hostname;
+    return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+  } catch {
+    return null;
+  }
+}
+
+const AddressField: React.FC<AddressFieldProps> = ({
+  tab,
+  searchEngine,
+  isLoading,
+  isSplitPane = false,
+  onActivate,
+  onNavigate,
+}) => {
   const [url, setUrl] = useState("");
-  const [isEditing, setIsEditing] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setUrl(tab?.url || "");
+    }
+  }, [tab?.url, isFocused]);
+
+  const activateTab = (): void => {
+    if (tab && !tab.isActive) {
+      void onActivate(tab.id);
+    }
+  };
+
+  const handleSubmit = (event: React.FormEvent): void => {
+    event.preventDefault();
+    if (!tab || !url.trim()) return;
+
+    const finalUrl = normalizeNavigationTarget(url, searchEngine);
+    void onNavigate(tab.id, finalUrl);
+    setIsFocused(false);
+    (document.activeElement as HTMLElement)?.blur();
+  };
+
+  const handleFocus = (): void => {
+    activateTab();
+    setIsFocused(true);
+  };
+
+  const handleBlur = (): void => {
+    setIsFocused(false);
+    setUrl(tab?.url || "");
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      setIsFocused(false);
+      setUrl(tab?.url || "");
+      (event.target as HTMLInputElement).blur();
+    }
+  };
+
+  if (isFocused) {
+    return (
+      <form
+        onSubmit={handleSubmit}
+        className={cn("min-w-0 max-w-full", isSplitPane ? "flex-1" : "flex-1")}
+      >
+        <div
+          className={cn(
+            "h-8 rounded-md border bg-card px-3 shadow-sm transition-colors",
+            tab?.isActive ? "border-primary/45" : "border-border",
+          )}
+        >
+          <input
+            type="text"
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            onFocus={handleFocus}
+            onBlur={handleBlur}
+            onKeyDown={handleKeyDown}
+            className="h-full w-full bg-transparent text-[0.8rem] text-foreground outline-none"
+            placeholder={tab ? "Enter URL or search term" : "No active tab"}
+            disabled={!tab || isLoading}
+            spellCheck={false}
+            autoFocus
+          />
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div
+      onClick={handleFocus}
+      className={cn(
+        "min-w-0 px-3 h-8 rounded-md border cursor-text group/address-bar",
+        "bg-card text-muted-foreground app-region-no-drag shadow-sm",
+        "hover:bg-card transition-colors duration-200",
+        isSplitPane ? "flex-1" : "flex-1",
+        tab?.isActive ? "border-primary/45" : "border-border",
+      )}
+    >
+      <div className="flex h-full items-center">
+        <div className="size-4 mr-2">
+          <Favicon src={getFavicon(tab)} />
+        </div>
+
+        <div className="text-[0.8rem] leading-normal truncate flex-1">
+          {tab ? (
+            <>
+              <span className="text-foreground dark:text-foreground">
+                {getDomain(tab)}
+              </span>
+              <span className="group-hover/address-bar:hidden text-muted-foreground/60">
+                {tab.title && ` / ${tab.title}`}
+              </span>
+              <span className="group-hover/address-bar:inline hidden text-muted-foreground/60">
+                {getPath(tab)}
+              </span>
+            </>
+          ) : (
+            <span className="text-muted-foreground">No active tab</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export const AddressBar: React.FC = () => {
+  const {
+    activeTab,
+    splitTabs,
+    isSplitView,
+    navigateTabToUrl,
+    goBack,
+    goForward,
+    reload,
+    switchTab,
+    toggleSplitView,
+    isLoading,
+  } = useBrowser();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [searchEngine, setSearchEngine] = useState<
-    "google" | "duckduckgo" | "bing"
-  >("google");
+  const [searchEngine, setSearchEngine] = useState<SearchEngine>("google");
   const [hasUpdate, setHasUpdate] = useState(false);
 
   useEffect(() => {
@@ -35,7 +235,7 @@ export const AddressBar: React.FC = () => {
       (state) => setHasUpdate(state.hasUpdate && !state.dismissed),
     );
 
-    const loadState = async () => {
+    const loadState = async (): Promise<void> => {
       try {
         const [settings, updateState] = await Promise.all([
           window.topBarAPI.getAppSettings(),
@@ -56,119 +256,24 @@ export const AddressBar: React.FC = () => {
     };
   }, []);
 
-  // Update URL when active tab changes
-  useEffect(() => {
-    if (activeTab && !isEditing) {
-      setUrl(activeTab.url || "");
-    }
-  }, [activeTab, isEditing]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!url.trim()) return;
-
-    let finalUrl = url.trim();
-
-    // Add protocol if missing
-    if (!finalUrl.startsWith("http://") && !finalUrl.startsWith("https://")) {
-      // Check if it looks like a domain
-      if (finalUrl.includes(".") && !finalUrl.includes(" ")) {
-        finalUrl = `https://${finalUrl}`;
-      } else {
-        const encoded = encodeURIComponent(finalUrl);
-        if (searchEngine === "duckduckgo") {
-          finalUrl = `https://duckduckgo.com/?q=${encoded}`;
-        } else if (searchEngine === "bing") {
-          finalUrl = `https://www.bing.com/search?q=${encoded}`;
-        } else {
-          finalUrl = `https://www.google.com/search?q=${encoded}`;
-        }
-      }
-    }
-
-    navigateToUrl(finalUrl);
-    setIsEditing(false);
-    setIsFocused(false);
-    (document.activeElement as HTMLElement)?.blur();
-  };
-
-  const handleFocus = () => {
-    setIsEditing(true);
-    setIsFocused(true);
-  };
-
-  const handleBlur = () => {
-    setIsEditing(false);
-    setIsFocused(false);
-    // Reset to current tab URL if editing was cancelled
-    if (activeTab) {
-      setUrl(activeTab.url || "");
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      setIsEditing(false);
-      setIsFocused(false);
-      if (activeTab) {
-        setUrl(activeTab.url || "");
-      }
-      (e.target as HTMLInputElement).blur();
-    }
-  };
-
   const canGoBack = Boolean(activeTab?.canGoBack);
   const canGoForward = Boolean(activeTab?.canGoForward);
 
-  // Extract domain and title for display
-  const getDomain = () => {
-    if (!activeTab?.url) return "";
-    if (activeTab.url === INTERNAL_WELCOME_URL) return "BlueBerry Browser";
-    try {
-      const urlObj = new URL(activeTab.url);
-      return urlObj.hostname.replace("www.", "");
-    } catch {
-      return activeTab.url;
-    }
-  };
-
-  const getPath = () => {
-    if (!activeTab?.url) return "";
-    if (activeTab.url === INTERNAL_WELCOME_URL) return "";
-    try {
-      const urlObj = new URL(activeTab.url);
-      return urlObj.pathname + urlObj.search + urlObj.hash;
-    } catch {
-      return "";
-    }
-  };
-
-  const getFavicon = () => {
-    if (!activeTab?.url) return null;
-    if (activeTab.url === INTERNAL_WELCOME_URL) return null;
-    try {
-      const domain = new URL(activeTab.url).hostname;
-      return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-    } catch {
-      return null;
-    }
-  };
-
-  const toggleSidebar = () => {
+  const toggleSidebar = (): void => {
     setIsSidebarOpen(!isSidebarOpen);
-    // Send IPC event to toggle sidebar
     if (window.topBarAPI) {
-      window.topBarAPI.toggleSidebar();
+      void window.topBarAPI.toggleSidebar();
     }
   };
 
-  const openSettings = () => {
+  const openSettings = (): void => {
     void window.topBarAPI.openBrowserSettings();
   };
 
+  const addressTabs = isSplitView ? splitTabs : [activeTab];
+
   return (
     <>
-      {/* Navigation Controls */}
       <div className="flex gap-1.5 app-region-no-drag">
         <ToolBarButton
           Icon={ArrowLeft}
@@ -192,69 +297,32 @@ export const AddressBar: React.FC = () => {
         </ToolBarButton>
       </div>
 
-      {/* Address Bar */}
-      {isFocused ? (
-        // Expanded State
-        <form onSubmit={handleSubmit} className="flex-1 min-w-0 max-w-full">
-          <div className="h-8 rounded-md border border-border bg-card px-3 shadow-sm transition-colors">
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              onFocus={handleFocus}
-              onBlur={handleBlur}
-              onKeyDown={handleKeyDown}
-              className="h-full w-full bg-transparent text-[0.8rem] text-foreground outline-none"
-              placeholder={
-                activeTab ? "Enter URL or search term" : "No active tab"
-              }
-              disabled={!activeTab}
-              spellCheck={false}
-              autoFocus
-            />
-          </div>
-        </form>
-      ) : (
-        // Collapsed State
-        <div
-          onClick={handleFocus}
-          className={cn(
-            "flex-1 px-3 h-8 rounded-md border border-border cursor-text group/address-bar",
-            "bg-card text-muted-foreground app-region-no-drag shadow-sm",
-            "hover:bg-card",
-            "transition-colors duration-200",
-          )}
-        >
-          <div className="flex h-full items-center">
-            {/* Favicon */}
-            <div className="size-4 mr-2">
-              <Favicon src={getFavicon()} />
-            </div>
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 gap-1.5",
+          isSplitView && "rounded-md",
+        )}
+      >
+        {addressTabs.map((tab, index) => (
+          <AddressField
+            key={tab?.id ?? `empty-${index}`}
+            tab={tab}
+            searchEngine={searchEngine}
+            isLoading={isLoading}
+            isSplitPane={isSplitView}
+            onActivate={switchTab}
+            onNavigate={navigateTabToUrl}
+          />
+        ))}
+      </div>
 
-            {/* URL Display */}
-            <div className="text-[0.8rem] leading-normal truncate flex-1">
-              {activeTab ? (
-                <>
-                  <span className="text-foreground dark:text-foreground">
-                    {getDomain()}
-                  </span>
-                  <span className="group-hover/address-bar:hidden text-muted-foreground/60">
-                    {activeTab.title && ` / ${activeTab.title}`}
-                  </span>
-                  <span className="group-hover/address-bar:inline hidden text-muted-foreground/60">
-                    {getPath()}
-                  </span>
-                </>
-              ) : (
-                <span className="text-muted-foreground">No active tab</span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Actions Menu */}
       <div className="flex items-center gap-1 app-region-no-drag">
+        <ToolBarButton
+          Icon={Columns2}
+          onClick={toggleSplitView}
+          toggled={isSplitView}
+          active={activeTab !== null && !isLoading}
+        />
         <div className="relative">
           <ToolBarButton Icon={Settings} onClick={openSettings} />
           {hasUpdate && (

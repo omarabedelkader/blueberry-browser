@@ -20,6 +20,8 @@ export class EventManager {
     "close-tab",
     "switch-tab",
     "get-tabs",
+    "toggle-split-view",
+    "get-split-state",
     "navigate-to",
     "navigate-tab",
     "go-back",
@@ -209,14 +211,40 @@ export class EventManager {
         return [];
       }
       const activeTabId = mainWindow.activeTab?.id;
-      return mainWindow.allTabs.map((tab) => ({
-        id: tab.id,
-        title: tab.title,
-        url: tab.url,
-        isActive: activeTabId === tab.id,
-        canGoBack: tab.webContents.navigationHistory.canGoBack(),
-        canGoForward: tab.webContents.navigationHistory.canGoForward(),
-      }));
+      const splitState = mainWindow.getSplitState();
+      return mainWindow.allTabs.map((tab) => {
+        const splitIndex = splitState.tabIds.indexOf(tab.id);
+        return {
+          id: tab.id,
+          title: tab.title,
+          url: tab.url,
+          isActive: activeTabId === tab.id,
+          isSplit: splitState.tabIds.includes(tab.id),
+          splitIndex: splitIndex >= 0 ? splitIndex : null,
+          canGoBack: tab.webContents.navigationHistory.canGoBack(),
+          canGoForward: tab.webContents.navigationHistory.canGoForward(),
+        };
+      });
+    });
+
+    ipcMain.handle("toggle-split-view", (_, url?: string) => {
+      this.logChannel("toggle-split-view");
+      const validatedUrl = parseIpcInput(
+        ipcSchemas.optionalNavigationTarget,
+        url,
+        "toggle-split-view",
+      );
+      return this.requireMainWindow().toggleSplitView(validatedUrl);
+    });
+
+    ipcMain.handle("get-split-state", () => {
+      this.logChannel("get-split-state");
+      return (
+        this.getAvailableMainWindow()?.getSplitState() ?? {
+          isSplit: false,
+          tabIds: [],
+        }
+      );
     });
 
     // Navigation (for compatibility with existing code)
